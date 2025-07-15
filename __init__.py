@@ -189,7 +189,7 @@ class UP_PT_PropsPanel(bpy.types.Panel):
             
         else:
             box = layout.box()
-            box.label(text="Please generate a blend material.  "+goofy_insult(), icon="ERROR")
+            box.label(text="Please generate a blend material.  "+goofy_insult(allow=bpy.context.preferences.addons[__name__].preferences.use_goofy_insults), icon="ERROR")
 
 
 class UP_PT_PreferencesPanel(bpy.types.AddonPreferences):
@@ -205,7 +205,7 @@ class UP_PT_PreferencesPanel(bpy.types.AddonPreferences):
         row = layout.row()
         row.prop(self, 'use_goofy_insults')
         if self.use_goofy_insults:
-            row.label(text="E.G. " + goofy_insult())
+            row.label(text="E.G. " + goofy_insult(allow=bpy.context.preferences.addons[__name__].preferences.use_goofy_insults))
         else:
             row.label(text="E.G. " + "404 brain not found.")
             
@@ -320,16 +320,16 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
             
         # Preliminary checks to avoid disaster
         if active_object.type != "MESH":
-            self.report({'WARNING'}, "Target object is not a mesh.  " + goofy_insult())
+            self.report({'WARNING'}, "Target object is not a mesh.  " + goofy_insult(allow=bpy.context.preferences.addons[__name__].preferences.use_goofy_insults))
             return {'CANCELLED'}
         if len(materials) < 2:
-            self.report({'WARNING'}, "Please select at least two materials.  " + goofy_insult())
+            self.report({'WARNING'}, "Please select at least two materials.  " + goofy_insult(allow=bpy.context.preferences.addons[__name__].preferences.use_goofy_insults))
             return {'CANCELLED'}
             
         all_materials = [entry.material for entry in scene.target.ll_materials] 
         for m in all_materials or (scene.target.ll_material_index < len(scene.target.ll_materials)):
             if not m:
-                self.report({'WARNING'}, "Please remove unused material slots!  " + goofy_insult())
+                self.report({'WARNING'}, "Please remove unused material slots!  " + goofy_insult(allow=bpy.context.preferences.addons[__name__].preferences.use_goofy_insults))
                 return {'CANCELLED'}            
             
         # Remove all material slots
@@ -346,7 +346,7 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
         
         # Check if this object already has a material
         if any(mat and mat.name == blend_mat_name for mat in active_object.data.materials):
-            self.report({'WARNING'}, "This object already has a blend material.  " + goofy_insult())
+            self.report({'WARNING'}, "This object already has a blend material.  " + goofy_insult(allow=bpy.context.preferences.addons[__name__].preferences.use_goofy_insults))
             return {'CANCELLED'}
          
         mask_res = scene.ll_texture_resolution
