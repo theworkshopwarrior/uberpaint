@@ -49,14 +49,22 @@ goofy_insults = [
     "That was a certified hood classic... of failure.",
     "You really woke up and chose nonsense.",
     "Even Google can’t find logic in that move.",
-    # "You moving like a bot programmed in Scratch.",
+    "You moving like a bot programmed in Scratch.",
     "That play was so bad, my RAM crashed.",
     "Bro thinks he's in a sandbox game with no consequences.",
     "Even Clippy wouldn’t know how to help you right now.",
     "You just unlocked a new low score.",
     "This is what happens when you skip the tutorial.",
     "Bro's gameplay looking like a PowerPoint slideshow.",
-    "Even your shadow facepalmed."
+    "Even your shadow facepalmed.",
+    "An AI from 2010 could replace you.",
+    "500 your brain had a snack break and forgot to come back.",
+    "Brain.exe stopped responding.",
+    "Lol",
+    "Will you consider using your brain for once?",
+    "Materials are not saving that topology.",
+    "Ugggh, Not even Blender Guru could save this.",
+    "Yeah, maybe stick to Prisma.",
 ]
 
 # This is the function used to get a random insult at any time.

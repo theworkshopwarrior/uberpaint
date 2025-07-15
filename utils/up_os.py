@@ -29,9 +29,3 @@ def import_node_tree(filename, node_tree_name, new_name, subfolder=""):
         return node_group
     else:
         return None
-    
-    # node_group = data_to.node_groups[0]
-    # for node in node_group.node_tree.nodes:
-        # if node.type == 'GROUP':
-            # if node.name == 'ngroup_up_mask_fx':
-                # node.node_tree == bpy.data.node_groups['_up_mask_fx']

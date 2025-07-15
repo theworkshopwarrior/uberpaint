@@ -10,6 +10,7 @@ def up_blendmat_node_group(mat, converted_mats, mixer_groups, bg_color):
     if not(mat or orginal_mat):
         return none
         
+    
     mat.use_nodes = True
     up_blendmat = mat.node_tree
 
@@ -55,10 +56,12 @@ def up_blendmat_node_group(mat, converted_mats, mixer_groups, bg_color):
         group_a.location = (-220.0, _vertical_height*loop_counter)
 
         # Connect groups to mixers
-        up_blendmat.links.new(group_a.outputs[0], mixer_node.inputs[0])
-        if len(group_a.outputs) != 1: # Sometimes people are too lazy to use displacement
-            up_blendmat.links.new(group_a.outputs[1], mixer_node.inputs[2]) 
-        
+        if len(group_a.outputs) > 0:
+            up_blendmat.links.new(group_a.outputs[0], mixer_node.inputs[0])
+            if len(group_a.outputs) > 1: # Sometimes people are too lazy to use displacement
+                up_blendmat.links.new(group_a.outputs[1], mixer_node.inputs[2]) 
+        else:
+            raise ValueError("Source materials must have material outputs.")
         # Connect mixers to mixers >:D
         if loop_counter != 0:
             up_blendmat.links.new(prev_mixer_node.outputs[0], mixer_node.inputs[1])
@@ -75,234 +78,167 @@ def up_blendmat_node_group(mat, converted_mats, mixer_groups, bg_color):
     
     material_output.location = (350, material_output_y_offset)
     base_shader.inputs[0].default_value = (*bg_color, 1)
-    
+
     return up_blendmat
 
 ###########################################################
 
-# def material_to_group(mat, group_name):
-    # new_mat = mat.copy()
-    # new_mat.name = "_temp_mat"
-    # new_mat.use_nodes = True
+def create_dummy_material(original_mat):
+    dummy_name = f"TEMP_{original_mat.name}"
+    if dummy_name in bpy.data.materials:
+        bpy.data.materials.remove(bpy.data.materials[dummy_name])
     
-    # node_tree = new_mat.node_tree
-    # nodes = node_tree.nodes
-    
-    # area = next(area for area in bpy.context.screen.areas if area.type == 'NODE_EDITOR')
-    # with bpy.context.temp_override(area=area, region=area.regions[-1], space=area.spaces.active):
-        # node_tree.nodes.active = nodes[0] 
-        # for node in nodes:
-            # node.select = True
-        # bpy.ops.node.group_make()
-    
-    # group_node = node_tree.nodes.active
-    # group_node.node_tree.name = "YourGroupName"
+    dummy_mat = original_mat.copy()
+    dummy_mat.name = dummy_name
+    return dummy_mat
 
-    # # Remove the temporary material
-    # bpy.data.materials.remove(new_mat)
-    
-# def material_to_group(mat, obj_name):
-    # if not mat.node_tree:
-        # return None
-
-    # # Create new node group
-    # group_name = f"_up_{obj_name} - {mat.name}"
-    # #group = mat.node_tree.nodes.new('ShaderNodeGroup') #bpy.data.node_groups.new(group_name, 'ShaderNodeTree')
-  # # 1. Create an empty node group to register it in bpy.data
-    # node_group = bpy.data.node_groups.new(name=group_name, type='ShaderNodeTree')
-
-    # # 2. Assign that group to a ShaderNodeGroup in a material (optional visual feedback)
-    # group_node = mat.node_tree.nodes.new('ShaderNodeGroup')
-    # group_node.node_tree = node_group
-
-    # # 3. Copy the source material's node tree
-    # copied_tree = mat.node_tree.copy()
-
-    # # 4. Replace the placeholder node_group's content with the copied one
-    # # Since node groups don’t support .copy() overwrite, you must:
-    # # - Delete all nodes in the placeholder
-    # # - Paste the copied nodes/links manually
-
-    # # Clear the new group
-    # for node in node_group.nodes:
-        # node_group.nodes.remove(node)
-
-    # # Copy nodes from copied_tree to node_group
-    # node_map = {}
-    # for node in copied_tree.nodes:
-        # new_node = node_group.nodes.new(node.bl_idname)
-        # new_node.location = node.location
-        # new_node.label = node.label
-        # new_node.name = node.name
-        # new_node.width = node.width
-        # new_node.mute = node.mute
-        # new_node.hide = node.hide
-        # new_node.show_options = node.show_options
-
-        # # Copy input default values
-        # for i, input in enumerate(node.inputs):
-            # if input.enabled and hasattr(input, 'default_value'):
-                # if i < len(new_node.inputs):
-                    # new_input = new_node.inputs[i]
-                    # try:
-                        # new_input.default_value = input.default_value
-                    # except Exception as e:
-                        # print(f"⚠️ Input {i} of '{new_node.name}' failed: {e}")
-
-        # node_map[node] = new_node
-
-    # # Recreate links
-    # for link in copied_tree.links:
-        # from_node = node_map[link.from_node]
-        # to_node = node_map[link.to_node]
-        # node_group.links.new(
-            # from_node.outputs[link.from_socket.name],
-            # to_node.inputs[link.to_socket.name]
-        # )
-
-    # return copied_tree
-
-def material_to_group(original_mat, obj_name):
-
-    if not original_mat.node_tree:
+def material_to_group(mat, group_name):
+    if not mat.node_tree:
         return None
-
-    # Create new node group
-    group_name = f"_up_{obj_name} - {original_mat.name}"
-    group = bpy.data.node_groups.new(group_name, 'ShaderNodeTree')
-    group_nodes = group.nodes
-    group_links = group.links
-
-    # Create Group Output node
-    group_output_node = group_nodes.new('NodeGroupOutput')
-    group_output_node.location = (300, 0)
-    
-    # Track original nodes and links
-    original_nodes = original_mat.node_tree.nodes
-    original_links = original_mat.node_tree.links
-    original_output_node = next((n for n in original_nodes if n.type == 'OUTPUT_MATERIAL'), None)
-
-    if not original_output_node:
-        return group
-
-    node_map = {}
-    # This is a bit of a yucky scenario.  We have to copy over all the original node's properties.  (e.g. transforms on a vector mapping node)
-    for node in original_nodes:
-        if node == original_output_node:
-            continue
-
-        # Create the new node
-        new_node = group_nodes.new(node.bl_idname)
-        node_map[node] = new_node
-
-        # Copy simple attributes
-        new_node.location = node.location
-        new_node.name = node.name
-        new_node.label = node.label
-
-        # Dynamically copy all properties
-        for prop in node.bl_rna.properties:
-            prop_name = prop.identifier
-            
-            # Skip read-only properties and already-copied attributes
-            if prop.is_readonly or prop_name in {"name", "label", "location"}:
-                continue
-
-            # Ensure both nodes have the property
-            if hasattr(node, prop_name) and hasattr(new_node, prop_name):
-                try:
-                    value = getattr(node, prop_name)
-
-                    # Handle special Blender types
-                    if isinstance(value, bpy.types.Image):  # Copy images (Texture nodes)
-                        setattr(new_node, prop_name, value)
-                    
-                    elif isinstance(value, bpy.types.NodeTree):  # Copy node groups
-                        setattr(new_node, prop_name, value)
-                    
-                    elif hasattr(value, "to_tuple"):  # Handle Vectors, Colors, Matrices
-                        setattr(new_node, prop_name, value.to_tuple())
-                    
-                    elif isinstance(value, (int, float, bool, str)):  # Handle standard types
-                        setattr(new_node, prop_name, value)
-
-                except (AttributeError, TypeError):
-                    pass
-
-        # Copy input socket default values
-        for input_socket, new_input_socket in zip(node.inputs, new_node.inputs):
-            if input_socket.type in {'VALUE', 'VECTOR', 'RGBA'}:
-                try:
-                    value = input_socket.default_value
-
-                    # Fix RGBA sockets that are missing alpha
-                    try:
-                        if input_socket.type == 'RGBA' and len(value) == 3:
-                            value = (*value, 1.0)
-                    except TypeError:
-                        pass  # In case value doesn't support len()
-                    print(new_input_socket.name)
-                    new_input_socket.default_value = value
-                except (AttributeError, TypeError, ValueError):
-                    continue
-    for link in original_links:
-        if link.to_node == original_output_node or link.from_node == original_output_node:
-            continue
-
-        from_node = node_map.get(link.from_node)
-        to_node = node_map.get(link.to_node)
         
-        if from_node and to_node:
-            from_socket = next((s for s in from_node.outputs if s.name == link.from_socket.name), None)
-            to_socket = next((s for s in to_node.inputs if s.name == link.to_socket.name), None)
+    # Ensure we have a valid context
+    if not bpy.context.window:
+        # Try to get a valid window
+        for window in bpy.context.window_manager.windows:
+            if window.screen:
+                bpy.context.window = window
+                break
+        else:
+            raise Exception("No valid window context found")
+
+    dummy_mat = create_dummy_material(mat)
+    tree = dummy_mat.node_tree
+    
+    group_name = str(f"_up_{group_name} - {mat.name}")
+    
+    # Clean up if group already exists
+    if group_name in bpy.data.node_groups:
+        bpy.data.node_groups.remove(bpy.data.node_groups[group_name])
+
+    # Select non-output nodes
+    nodes_to_group = [n for n in tree.nodes if not isinstance(n, bpy.types.ShaderNodeOutputMaterial)]
+    if not nodes_to_group:
+        bpy.data.materials.remove(dummy_mat)
+        raise Exception("Needs at least 1 node to generate.")
+
+    for node in tree.nodes:
+        node.select = False
+    for node in nodes_to_group:
+        node.select = True
+    tree.nodes.active = nodes_to_group[0]
+
+    # Store original area type to restore later
+    original_area_type = None
+    if bpy.context.area:
+        original_area_type = bpy.context.area.type
+
+    # Find or create node editor area
+    screen = bpy.context.window.screen
+    area = next((a for a in screen.areas if a.type == 'NODE_EDITOR'), None)
+    
+    is_new_area = False
+    if not area:
+        # Temporarily change an area to NODE_EDITOR if none exists
+        area = screen.areas[0]
+        original_area_type = area.type
+        area.type = 'NODE_EDITOR'
+        is_new_area = True
+
+    try:
+        # Configure node editor
+        space = area.spaces[0]
+        space.tree_type = 'ShaderNodeTree'
+        space.shader_type = 'OBJECT'
+        old_tree = space.node_tree
+        space.pin = True
+        space.node_tree = tree
+
+        # Force UI update
+        bpy.ops.wm.redraw_timer(type='DRAW_SWAP', iterations=1)
             
-            if from_socket and to_socket:
-                group_links.new(from_socket, to_socket)
+        # Build override context
+        override = {
+            'window': bpy.context.window,
+            'screen': screen,
+            'area': area,
+            'region': next((r for r in area.regions if r.type == 'WINDOW'), None),
+            'space_data': space,
+            'edit_tree': tree,
+            'node_tree': tree,
+        }
 
-    # Handle connections to the original output node
-    for link in original_links:
-        if link.to_node == original_output_node:
-            socket_name = link.to_socket.name
-            original_from_socket = link.from_socket
-            group_from_node = node_map.get(link.from_node)
+        # Perform grouping
+        with bpy.context.temp_override(**override):
+            bpy.ops.node.group_make()
+        
+        # Clean up
+        space.pin = False
+        space.node_tree = old_tree
+        
+        # Get the created group
+        sel_nodes = [x for x in tree.nodes if x.select]
+        if not sel_nodes:
+            raise Exception("Group creation failed - no selected nodes after operation")
+            
+        ngroup_node = sel_nodes[0]
+        ngroup_node.node_tree.name = group_name
+        node_group = bpy.data.node_groups.get(group_name)
+        
+        if not node_group:
+            raise Exception("Failed to create node group")
+        
+        # Add keys to group
+        node_group['_up_mat'] = mat.name
+        node_group['_up_type'] = 'MATERIAL'
 
-            if group_from_node:
-                socket_type = link.to_socket.bl_idname
+        return node_group
 
-                # Check for existing output socket
-                existing_socket = None
-                for item in group.interface.items_tree:
-                    if (item.item_type == 'SOCKET' and 
-                        item.in_out == 'OUTPUT' and 
-                        item.name == socket_name):
-                        existing_socket = item
-                        break
+    finally:
+        # Clean up dummy material
+        if dummy_mat.name in bpy.data.materials:
+            bpy.data.materials.remove(dummy_mat)
 
-                # Create new socket if needed
-                if not existing_socket:
-                    group.interface.new_socket(
-                        name=socket_name,
-                        in_out='OUTPUT',
-                        socket_type=socket_type
-                    )
+        # Restore original area type if we changed it
+        if is_new_area and area and original_area_type:
+            area.type = original_area_type
 
-                # Find the new socket in Group Output node inputs
-                group_from_socket = next(
-                    (s for s in group_from_node.outputs if s.name == original_from_socket.name),
-                    None
-                )
-                
-                if group_from_socket:
-                    # Connect to the corresponding Group Output input
-                    output_socket = group_output_node.inputs.get(socket_name)
-                    if output_socket:
-                        group_links.new(group_from_socket, output_socket)
+###########################################################
 
+def create_paint_layer(layer, obj):
+    name = f"{layer.name} Paint ({obj.name}) {layer.id}" 
+    
+    if name in bpy.data.node_groups:
+        group = bpy.data.node_groups[name]
+    else:
+        group = import_node_tree('up_mixer.blend', '_up_paint_layer', name)
+    
+    if obj.uberpaint.mask_type == 'TEXTURE':
+        group.nodes['base_color'].image = layer.image_texture
+        group.nodes['base_color'].interpolation = 'Cubic'
+        group.nodes['uv_map'].uv_map = '_upm_paintUVs'
+        group.links.new(group.nodes['base_color'].outputs[0], group.nodes['col_in'].inputs[0])
+    if obj.uberpaint.mask_type == 'VERTEX':
+        group.nodes['col_attr'].layer_name = layer.color_attr
+        group.links.new(group.nodes['col_attr'].outputs[0], group.nodes['col_in'].inputs[0])
+ 
+    if not group:
+        raise Exception("Failed to create node group")
+    
+    # Add keys to group
+    group['_up_type'] = 'PAINT'
+    layer.paint_group = group
+    
     return group
+            
 ###########################################################
     
-def up_mixer_node_group(name: str, istexture: bool, attr_name: str, uv_name: str, image_tex, mask_src, self):
-    
+def up_mixer_node_group(obj, layer, name, uv_name, self):
+    image_tex = layer.image_texture
+    mask_src = layer.mask_source
+    layer_type = layer.type
+    layer_id = layer.id
+    attr_name = layer.color_attr    
+    istexture = (obj.uberpaint.mask_type == 'TEXTURE')
     # Retreive Mixer node tree
     if name in bpy.data.node_groups:
         _up_mixer = bpy.data.node_groups[name]
@@ -316,19 +252,30 @@ def up_mixer_node_group(name: str, istexture: bool, attr_name: str, uv_name: str
     up_mask_fx = _up_mixer.nodes['ngroup_up_mask_fx']   
     mask_input = _up_mixer.nodes["mask_input"] # Reroute that sources are connected to
     
-    
+    # Remove unnecasary up_mask_fx groups
+    up_mask_fx.node_tree = bpy.data.node_groups['_up_mask_fx']
+    for grp in bpy.data.node_groups:
+        if grp.name.startswith('_up_mask_fx') and grp.name != '_up_mask_fx':
+            bpy.data.node_groups.remove(grp)
+        
     # Connect source node to mask_input
     if mask_src == "PAINT":
+        print('lalala paint')
         if istexture:
             image_tex = bpy.data.images[attr_name]
             if image_tex:
                 src_img_node.image = image_tex
+                src_img_node.interpolation = 'Cubic'
                 uv_map_node.uv_map = uv_name
-            _up_mixer.links.new(src_img_node.outputs[0], mask_input.inputs[0])        
+                _up_mixer.links.new(src_img_node.outputs[0], mask_input.inputs[0])        
+                if layer_type == 'PAINT':
+                    _up_mixer.links.new(src_img_node.outputs[1], mask_input.inputs[0]) 
         else: 
             vcol_node.layer_name = attr_name
             _up_mixer.links.new(vcol_node.outputs[0], mask_input.inputs[0])
-    
+            if layer_type == 'PAINT':
+                _up_mixer.links.new(vcol_node.outputs[0], mask_input.inputs[0]) 
+            
     elif mask_src == "AO":
         if "src_ao" in _up_mixer.nodes:
             _up_mixer.links.new(_up_mixer.nodes["src_ao"].outputs[0], mask_input.inputs[0])
@@ -337,17 +284,20 @@ def up_mixer_node_group(name: str, istexture: bool, attr_name: str, uv_name: str
         if "src_noise" in _up_mixer.nodes:
             _up_mixer.links.new(_up_mixer.nodes["src_noise"].outputs[0], mask_input.inputs[0])
     
-    
-    # Warn user if a source isn't connected properly
-    if len(mask_input.inputs[0].links) < 1: 
-        self.report('WARNING', 'Thou hath tampereth with the mixer node group!')
+    # # Warn user if a source isn't connected properly
+    # if len(mask_input.inputs[0].links) < 1: 
+        # self.report('WARNING', 'Thou hath tampereth with the mixer node group!')
         
+    _up_mixer['_up_type'] = "MIXER"
+    _up_mixer['_up_id'] = layer_id
+    _up_mixer['_up_obj'] = obj.name
+    
     return _up_mixer
     
 ###################################################################
 
 def _up_mask_fx_node_group():
-    if "_up_mask_fx" in bpy.data.node_groups:
+    if '_up_mask_fx' in bpy.data.node_groups:
         return bpy.data.node_groups["_up_mask_fx"]
     else:
         import_node_tree('up_mixer.blend', '_up_mask_fx', '_up_mask_fx')    

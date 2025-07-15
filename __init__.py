@@ -3,10 +3,10 @@ bl_info = {
     "description": "Quickly paint PBR materials using vertex colors or textures",
     "location": "N-Panel",
     "author": "Forest Stook",
-    "version": (0, 7, 0),
-    "blender": (4, 2, 0),
+    "version": (0, 9, 0),
+    "blender": (4, 4, 0),
     "category": "Material",
-    "warning": "UberPaint is still in development. Please report bugs to iotbot2010@gmail.com or theworkshopwarrior on Discord.",
+    "warning": "UberPaint is still in development and may have bugs. Report issues to iotbot2010@gmail.com",
 }
 
 links = {"Discord" : 'https://discord.gg/NQ68E2y26P',
@@ -14,28 +14,36 @@ links = {"Discord" : 'https://discord.gg/NQ68E2y26P',
          }
          
 #_TODO:_
-# Don't open up popup if already up
-# Add paint layers
-# Improve stability by preventing user from going too fast?
-# Don't import multiple maskfx groups from mixer.blend
-# -- Lesser priority
-# Noise texture blending
-# More comprehensive UI help buttons
-# Custom Mask Presets
-# Fix nodetree organization in 4.3-
+# Fix image textures
+# Clean up unneccesary pointers
+# Remove references to pointers upon object deletion
 
 # _DONE:_
-#--- 0.7:
-# Redo node tree creation
-# Test and fix for 4.2 - 4.4
-# Disable changing of mask sourcein non object mode
-# Auto updates after changing displacement mode
-# INVESTIGATE UPDATE GROUP + AUTO UPDATE
+#--- 0.9:
+# Displacement offset
+# Renamable layers
+# UI improvements
+# Fix node group removal
+# Check image texture functionality
+# Finish replacing references with new naming, (e.g.) scene.target with scene.uberpaint.target
+# Add list item at top
+# Don't show invalid objects or materials in selectors
+# Alert user that vertex color paint layers suck
+# Set white/black paint colors by default in image texture mode
+# Add alert and cancel on empty material entries
+# Work with duplicate material entries
+# Fix image/attribute when changing material
+# Allow paint layers to work on generation
+# Displacement blending textures are automatically added
+
+# _IMPEDED:_
+# Don't open up popup if already up?
 
 import bpy, mathutils, textwrap
 
 from bpy import context
 from bl_ui.generic_ui_list import draw_ui_list
+from random import uniform
 
 from bpy.props import (IntProperty,
                        BoolProperty,
@@ -58,16 +66,110 @@ reload(up_materials)
 from .utils.up_materials import (
     up_mixer_node_group,
     up_blendmat_node_group, 
-    material_to_group
+    material_to_group,
+    create_paint_layer
 )
 
-bpy.types.Scene.target = bpy.props.PointerProperty(type=bpy.types.Object)
-
 # --- SETTINGS ---
-up_version = 0.7
-up_info = "Beta"
+up_version = ".".join(map(str, bl_info["version"][:2]))
+up_info = "Alpha"
 bl_version = bpy.app.version
 #---------------
+
+
+###########################################################
+# Functions
+###########################################################
+
+def get_layer_icon(index):
+    layer_type = bpy.context.scene.uberpaint.target.uberpaint.layers[index].type
+    icons = {
+        "MATERIAL": "MATERIAL",
+        "PAINT": "BRUSHES_ALL",
+        "GENERATOR": "TEXTURE_DATA",
+    }
+    return icons.get(layer_type, "nothing")
+
+def update_blendmat(self, context):
+    # Do only if already has a blend material
+    if bpy.context.scene.uberpaint.target.uberpaint.has_mask:  
+        bpy.ops.up.generate_material(isupdate=True)
+
+def up_draw_socket(layout, context, node, socket_name, label=""):
+    row = layout.row()
+    socket = node.inputs[socket_name]
+    row_label = label if label != "" else socket.name
+    row.label(text=row_label)
+    socket.draw(context, row, node, socket.name)
+   
+def get_active_layer(context):
+    scene = context.scene
+    target = scene.uberpaint.target 
+    if hasattr(target.uberpaint, "layers") and len(target.uberpaint.layers) > target.uberpaint.layer_index:
+        return target.uberpaint.layers[target.uberpaint.layer_index]
+    return None
+
+def generate_id(layers):
+    letters = ['a', 'b', 'c', 'x', 'f']
+    id = str(int(uniform(1000, 9999))) + letters[int(uniform(0, len(letters)-1))]
+    while any(layer.id == id for layer in layers):
+        id = str(uniform(1000, 9999)) + letters[uniform(0, len(letters)-1)]     
+    return id
+    
+def copy_layers(old, new):
+    layers = old.uberpaint.layers
+    for layer in layers:
+        new_layer = new.uberpaint.layers.add()
+        new_layer.id = generate_id(new.uberpaint.layers)    
+        new_layer.name = layer.name
+        new_layer.type = layer.type
+        new_layer.material = layer.material
+        new_layer.opacity = layer.opacity
+        new_layer.mask_source = layer.mask_source
+
+def mat_filter(self, material):
+    if not material:
+        return False
+    
+    if material.library:
+        return False
+    
+    if material.is_grease_pencil:
+        return False
+    
+    if hasattr(material, 'override_library') and material.override_library:
+        return False
+        
+    if 'up_bmat' in material:
+        return False
+    
+    return True
+
+def obj_filter(self, object):
+    if object.type != 'MESH':
+        return False
+    
+    return True
+
+def find_disp_texture(material):
+    if not material or not material.use_nodes:
+        return None
+
+    node_tree = material.node_tree
+    disp_textures = []
+
+    displacement_node_types = {'DISPLACEMENT'}
+
+    for node in node_tree.nodes:
+        if node.type in displacement_node_types:
+            for input in node.inputs:
+                if input.is_linked:
+                    linked_node = input.links[0].from_node
+                    if linked_node.type == 'TEX_IMAGE' and linked_node.image:
+                        disp_textures.append(linked_node.image)
+
+    return disp_textures
+    
 
 ###########################################################
 # Classes
@@ -83,61 +185,74 @@ class UP_PT_MainPanel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
-        obj = context.scene.target
+        obj = context.scene.uberpaint.target
         
-        # if not obj:
-            # return
         row = layout.row()
-        row.prop_search(context.scene, "target", context.scene, "objects", text="Target Object")
-        row.operator("ll.set_target", text="", icon="MOD_LINEART")
+        row.prop_search(context.scene.uberpaint, "target", context.scene, "objects", text="Target Object")
+        row.operator("up.set_target", text="", icon="MOD_LINEART")
         
         if obj:
+            layers = obj.uberpaint.layers
             layout.label(text="Layers:")   
             
             row = layout.row()
             
-            row.template_list("UP_UL_MaterialList", "", obj, "ll_materials", obj, "ll_material_index")
+            row.template_list("UP_UL_MaterialList", "", obj.uberpaint, "layers", obj.uberpaint, "layer_index")
             
             col = row.column(align=True)
             col.enabled = obj.mode == "OBJECT"
             
-            col.operator("ll.manage_material", icon='ADD', text="").action = 'ADD'
-            col.operator("ll.manage_material", icon='REMOVE', text="").action = 'REMOVE'
+            col.operator("up.manage_layers", icon='ADD', text="").action = 'ADD'
+            col.operator("up.manage_layers", icon='REMOVE', text="").action = 'REMOVE'
             #col.separator()
             #col.menu("MATERIAL_MT_context_menu", icon='DOWNARROW_HLT', text="")
             col.separator()
-            col.operator("ll.manage_material", icon='TRIA_UP', text="").action = 'UP'
-            col.operator("ll.manage_material", icon='TRIA_DOWN', text="").action = 'DOWN'
+            col.operator("up.manage_layers", icon='TRIA_UP', text="").action = 'UP'
+            col.operator("up.manage_layers", icon='TRIA_DOWN', text="").action = 'DOWN'
             
-            if not scene.target.has_mask:
+            if len(obj.uberpaint.layers) < 1:
+                col.separator()
+                row = col.row()
+                row.enabled = (context.active_object != obj and context.active_object.uberpaint.has_mask)
+                row.operator("up.copy_layers", icon='PASTEFLIPUP', text="")
+            
+            if not obj.uberpaint.has_mask:
                 layout.label(text="Mask Target:")
-                layout.prop(obj, "ll_blend_mode", text="")
+                layout.prop(obj.uberpaint, "mask_type", text="")
             
             # Layer generation button
             row = layout.row()
             row.enabled = bpy.context.object.mode == "OBJECT"
             row.scale_y = 1.5
             
-            if scene.target.has_mask:
-                row.operator("ll.generate_material", text="Update Blend Material", icon="FILE_REFRESH").action = True
+            # Vertex color paint layer warning
+            if (not obj.uberpaint.has_mask) and obj.uberpaint.mask_type == 'VERTEX' and any(layer.type == 'PAINT' for layer in obj.uberpaint.layers):
+                info=row.operator('wm.info', text ="", icon="ERROR")
+                info.message1="Paint Layer"
+                info.message2="Paint layers may have unexpected results when in Vertex Painting mode. Switch to texture painting for better results."
+            
+            if scene.uberpaint.target.uberpaint.has_mask:
+                row.operator("up.generate_material", text="Update Blend Material", icon="FILE_REFRESH").isupdate = True
             else:
-                row.operator("ll.generate_material", text="Generate Blend Material", icon="SHADERFX").action = False
+                row.operator("up.generate_material", text="Generate Blend Material", icon="SHADERFX").isupdate = False
                 _settings_menu = row.operator("wm.settingsmenu", text="", icon="PREFERENCES")
-                #_settings_menu.enabled = not(scene.target.has_mask)
+                #_settings_menu.enabled = not(scene.uberpaint.target.uberpaint.has_mask)
             #------------------------------------
             
             # Layer deletion button
             row = layout.row()
-            row.enabled = scene.target.has_mask and bpy.context.object.mode == "OBJECT"
-            row.operator("ll.remove_material", text="Remove Blend Material", icon="TRASH")
+            row.enabled = scene.uberpaint.target.uberpaint.has_mask and bpy.context.object.mode == "OBJECT"
+            row.operator("up.remove_material", text="Remove Blend Material", icon="TRASH")
             
             layout.separator()
-            if scene.target.has_mask:
-                layout.prop(obj, "ll_disp_mode", text="Displacement Mode")
+            if scene.uberpaint.target.uberpaint.has_mask:
+                row = layout.row()
+                row.enabled = (bpy.context.object.mode == 'OBJECT')
+                row.prop(obj.uberpaint, "displacement_mode", text="Displacement Mode")
 
     
 class UP_PT_PropsPanel(bpy.types.Panel):
-    bl_label = "Layer Properties"
+    bl_label = ""
     bl_idname = "UP_PT_PropsPanel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -146,56 +261,105 @@ class UP_PT_PropsPanel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
-        obj = context.scene.target
-        active_layer = get_active_layer(context)
+        obj = context.scene.uberpaint.target   
         
-        
-        if obj and obj.has_mask:
-            box = layout.box()
-            box.enabled = (bpy.context.object.mode == 'OBJECT')
-            mgroup = active_layer.mixer_group
-            
-            mask_src = active_layer.mask_source
-            box.prop(active_layer, 'mask_source')
-            
-            if mask_src == "AO" and mgroup.nodes.get('src_ao'):
-                box.template_node_inputs(mgroup.nodes['src_ao'])
-            if mask_src == "NOISE" and mgroup.nodes.get('src_noise'):
-                box.template_node_inputs(mgroup.nodes['src_noise'])
-            
-            layout.label(text="Mask Adjustments")
-            box = layout.box()          
-            row = box.row()
-            opacity_node = mgroup.nodes["opacity"]
-            socket = opacity_node.inputs[0]
-            row.label(text="Opacity")
-            socket.draw(context, row, opacity_node, socket.name) # Opacity Slider
-            box.label(text="Mask Controls:")
-            mgroup.nodes["color_adjustments"].draw_buttons(context, box) # Color Ramp
-            
-            box = layout.box()
-            # tex = context.texture
-            # layout.template_image(active_layer, "image", tex.image_user)
-            
-            box.label(text="Displacement Blending")
-            fx_node = mgroup.nodes["ngroup_up_mask_fx"]
-            disp_node = mgroup.nodes["disp_blending_tex"]
-            
-            disp_node.draw_buttons(context, layout)
-            for input_socket in fx_node.inputs:
-                if not input_socket.is_linked:
-                    layout.prop(input_socket, "default_value", text=input_socket.name)
-            
-            
+        if obj and obj.uberpaint.has_mask:
+            active_layer = get_active_layer(context)  
+            if active_layer:
+                box = layout.box()
+                box.enabled = (bpy.context.object.mode == 'OBJECT')
+                mgroup = active_layer.mixer_group
+                box.prop(active_layer, 'name', text="Name")
+                box.prop(active_layer, 'type')
+                
+                if active_layer.type == 'MATERIAL' and mgroup:            
+                    box.prop(active_layer, "material", text="Source Material")
+                    
+                    box = layout.box()
+                    box.enabled = (bpy.context.object.mode == 'OBJECT')
+                    
+                    mask_src = active_layer.mask_source
+                    box.prop(active_layer, 'mask_source')
+                    
+                    if mask_src == "AO" and mgroup.nodes.get('src_ao'):
+                        box.template_node_inputs(mgroup.nodes['src_ao'])
+                    if mask_src == "NOISE" and mgroup.nodes.get('src_noise'):
+                        box.template_node_inputs(mgroup.nodes['src_noise'])
+                    
+                    box.label(text="Mask Adjustments")      
+                    row = box.row()
+                    opacity_node = mgroup.nodes["opacity"]
+                    socket = opacity_node.inputs[0]
+                    row.label(text="Opacity")
+                    socket.draw(context, row, opacity_node, socket.name) # Opacity Slider
+                    box.label(text="Mask Controls:")
+                    mgroup.nodes["color_adjustments"].draw_buttons(context, box) # Color Ramp                
+                    
+                    box.separator()
+                    
+                    box.label(text="Displacement Blending")
+                    fx_node = mgroup.nodes["ngroup_up_mask_fx"]
+                    disp_node = mgroup.nodes["disp_blending_tex"]
+                    
+                    disp_node.draw_buttons(context, box)
+                    for input_socket in fx_node.inputs:
+                        if not input_socket.is_linked:
+                            box.prop(input_socket, "default_value", text=input_socket.name)
+                            
+                    box.separator()
+                    
+                    up_draw_socket(box, context, mgroup.nodes["disp_offset"], 'Scale', "Displacement Offset:")
+                    up_draw_socket(box, context, mgroup.nodes["disp_height"], 'Scale', "Displacement Height:")
+                    
+                elif active_layer.type == 'PAINT': 
+                    box = layout.box()
+                    box.enabled = (bpy.context.object.mode == 'OBJECT')
+                    
+                    row = box.row()
+                    
+                    opacity_node = mgroup.nodes["opacity"]
+                    socket = opacity_node.inputs[0]
+                    row.label(text="Opacity")
+                    socket.draw(context, row, opacity_node, socket.name) # Opacity Slider
+                    
+                    box = layout.box()
+                    box.label(text = "Paint Material Properties")
+                    layer = active_layer
+                    painter_name = f"{layer.name} Paint ({obj.name}) {layer.id}" 
+                    paint_group = obj.uberpaint.blend_mat.node_tree.nodes[painter_name]
+                    for input_socket in paint_group.inputs:
+                        if not input_socket.is_linked:
+                            box.prop(input_socket, "default_value", text=input_socket.name)
+                    box.label(text="Normal Map")
+                    paint_group.node_tree.nodes["normal_map"].draw_buttons(context, box)
+                    mgroup.nodes["color_adjustments"].draw_buttons(context, box)
+                    
+                    box = layout.box()
+                    up_draw_socket(box, context, mgroup.nodes["disp_offset"], 'Scale', "Displacement Offset")
+                    up_draw_socket(box, context, mgroup.nodes["disp_height"], 'Scale', "Displacement Height")
+            else:
+                box = layout.box()
+                box.label(text="Please add at least one layer.  "+goofy_insult(), icon="ERROR")
         else:
             box = layout.box()
             box.label(text="Please generate a blend material.  "+goofy_insult(), icon="ERROR")
+    
+    def draw_header(self, context):
+        if context.scene.uberpaint.target and context.scene.uberpaint.target.uberpaint.has_mask and context.scene.uberpaint.target.uberpaint.layers != None:
+           active_layer = get_active_layer(context) 
+           row = self.layout.row()       
+           row.label(text=f"Layer Properties - {active_layer.name}")
+        else:
+           row = self.layout.row()       
+           row.label(text="Layer Properties")
 
 
 class UP_PT_PreferencesPanel(bpy.types.AddonPreferences):
     bl_idname = __name__
+    
     bg_color: bpy.props.FloatVectorProperty(name="Base Layer Color", subtype='COLOR', size=3, default=[0.1, 1, 0.0])
     use_goofy_insults: bpy.props.BoolProperty(name="Use Goofy Insults", default=True)
+    
     def draw(self, context):
         layout = self.layout
         #layout.label(text='Default Layer Color')
@@ -230,16 +394,16 @@ class UP_PT_ShaderPanel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
-        obj = context.scene.target
+        obj = context.scene.uberpaint.target
         mat = obj.active_material
-        materials = [entry.material for entry in obj.ll_materials if entry.material]  
+        materials = [entry.material for entry in obj.uberpaint.layers if entry.material]  
         
         if obj and bl_version > (4, 1, 0):
             row = layout.row()
             row.scale_y = 3
-            row.enabled = obj.has_mask and (mat in materials)
+            row.enabled = obj.uberpaint.has_mask and (mat in materials)
             row.alert = True
-            row.operator("ll.rebuild_src", text=f"Update this Group", icon="FILE_REFRESH", icon_value=656, emboss=True)
+            row.operator("up.rebuild_src", text=f"Update this Group", icon="FILE_REFRESH", icon_value=656, emboss=True)
 
 
 class UP_PT_SupportPanel(bpy.types.Panel):
@@ -270,7 +434,6 @@ class WM_OT_InfoBox(bpy.types.Operator):
     message1: bpy.props.StringProperty(default="Info")
     message2: bpy.props.StringProperty(default="There should really be something here...")
     icon: bpy.props.StringProperty(default="QUESTION")
-    width = 40
     
     def execute(self, context):
         return {'FINISHED'}
@@ -281,17 +444,15 @@ class WM_OT_InfoBox(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         
-        layout.label(icon=str(self.icon), text=str(self.message1))
+        #layout.label(icon=str(self.icon), text=str(self.message1))
         
-        # Wrapping to avoid overflow
-        
+        # Wrapping to avoid overflow       
         textTowrap = self.message2    
         wrapp = textwrap.TextWrapper(width=60)    
         wList = wrapp.wrap(text=textTowrap) 
         
-        box=layout.box()
         for text in wList: 
-            row = box.row(align = True)
+            row = layout.row(align = True)
             row.alignment = 'EXPAND'
             row.scale_y = 0.6
             row.label(text=text)
@@ -299,171 +460,184 @@ class WM_OT_InfoBox(bpy.types.Operator):
 
 class UP_OT_GenerateMaterial(bpy.types.Operator):
     """Generate a blend material for the target object"""
-    bl_idname = "ll.generate_material"
+    bl_idname = "up.generate_material"
     bl_label = "Generate Layer Material"
-    # bl_options = {'REGISTER', 'UNDO'}
     
-    action: bpy.props.BoolProperty(False) # False for generation, true for updates
+    isupdate: bpy.props.BoolProperty(False) # False for generation, true for updates
     
     def execute(self, context):
         wm = bpy.context.window_manager
         wm.progress_begin(0, 100)
         
         scene = context.scene
-        active_object = bpy.context.scene.target
-        blend_mode = context.scene.target.ll_blend_mode
-        materials = [entry.material for entry in scene.target.ll_materials if entry.material]       
-        mesh_dat = active_object.data
-
-        if self.action == True: 
-            bpy.ops.ll.remove_material(isupdate=True)
+        obj = scene.uberpaint.target
+        blend_mode = context.scene.uberpaint.target.uberpaint.mask_type
+        materials = [entry.material for entry in scene.uberpaint.target.uberpaint.layers if entry.material]       
+        mesh_dat = obj.data
             
         # Preliminary checks to avoid disaster
-        if active_object.type != "MESH":
+        if obj.type != "MESH":
             self.report({'WARNING'}, "Target object is not a mesh.  " + goofy_insult())
             return {'CANCELLED'}
         if len(materials) < 2:
             self.report({'WARNING'}, "Please select at least two materials.  " + goofy_insult())
             return {'CANCELLED'}
             
-        all_materials = [entry.material for entry in scene.target.ll_materials] 
-        for m in all_materials or (scene.target.ll_material_index < len(scene.target.ll_materials)):
-            if not m:
+        all_materials = [entry.material for entry in scene.uberpaint.target.uberpaint.layers] 
+        for layer in obj.uberpaint.layers or (obj.target.uberpaint.layer_index < len(obj.target.uberpaint.layers)):
+            if layer.type == 'MATERIAL' and (not layer.material):
                 self.report({'WARNING'}, "Please remove unused material slots!  " + goofy_insult())
                 return {'CANCELLED'}            
             
+        if self.isupdate == True: 
+            bpy.ops.up.remove_material(isupdate=True)
+            
         # Remove all material slots
-        active_object.data.materials.clear()
+        obj.data.materials.clear()
                 
         # Select and activate target; This may be removed soon.         
-        active_object.select_set(True)
-        bpy.context.view_layer.objects.active = active_object
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
         bpy.ops.object.select_all(action='DESELECT')
-        active_object.select_set(True)
+        obj.select_set(True)
         
         # -----Create Blend Material-----
-        blend_mat_name = active_object.name + " Blend Mat"
+        blend_mat_name = obj.name + " Blend Mat"
         
         # Check if this object already has a material
-        if any(mat and mat.name == blend_mat_name for mat in active_object.data.materials):
+        if any(mat and mat.name == blend_mat_name for mat in obj.data.materials):
             self.report({'WARNING'}, "This object already has a blend material.  " + goofy_insult())
             return {'CANCELLED'}
          
-        mask_res = scene.ll_texture_resolution
+        mask_res = scene.uberpaint.texture_resolution
         # Ready to go?  Check if we're using an image or a vertex texture and add attributes accordingly.     
         obj_image_textures =[]
         obj_vgroups = []
         if blend_mode == "TEXTURE":
-            if '_upm_paintUVs' not in active_object.data.uv_layers:
-                tex_UVs = active_object.data.uv_layers.new(name="_upm_paintUVs")
+            if '_upm_paintUVs' not in obj.data.uv_layers:
+                tex_UVs = obj.data.uv_layers.new(name="_upm_paintUVs")
                 mesh_dat.uv_layers.active = mesh_dat.uv_layers["_upm_paintUVs"]
-                active_object.select_set(True)
+                obj.select_set(True)
                 bpy.ops.object.mode_set(mode='EDIT')
                 bpy.ops.mesh.select_mode(type="FACE")
                 bpy.ops.mesh.select_all(action='SELECT')
                 bpy.ops.uv.smart_project(angle_limit=66, island_margin=0.03)
                 bpy.ops.object.mode_set(mode='OBJECT')
-            
-            i = 0
-            images = []
-            for mat in materials:
-                attr_name = "_upm: "+active_object.name+" - "+mat.name
-                images.append(attr_name)
-                i += 1
-                
+
             rep=0
-            for i in materials:
-                attr_name = "_upm: "+active_object.name+" - "+i.name
-                if not bpy.data.images.get(attr_name):
+            for layer in obj.uberpaint.layers:
+                attr_name = f"_upm: {obj.name} - {layer.name} ({layer.id})"
+                if not attr_name in bpy.data.images:
                     image_tex = bpy.data.images.new(attr_name, width=mask_res, height=mask_res)
                     
-                    if rep == len(materials)-1 and not self.action:
+                    if rep == len(obj.uberpaint.layers)-1 and not self.isupdate:
                         image_tex.pixels = [1.0, 1.0, 1.0, 1.0] * (mask_res * mask_res)
                     else:
-                        image_tex.pixels = [0.0, 0.0, 0.0, 1.0] * (mask_res * mask_res)
+                        image_tex.pixels = [0.0, 0.0, 0.0, 0] * (mask_res * mask_res)
                     image_tex.pack()
-                    print(image_tex)
                     obj_image_textures.append(image_tex)
-                    active_object.ll_materials[rep].image_texture = image_tex
-                    print("Added:" +image_tex.name)
-                print(active_object.ll_materials[rep].image_texture)
+                    
+                    layer.image_texture = image_tex
+                    layer.color_attr = attr_name
+                    print("Added:" +attr_name)
+
                 rep+=1
                           
-        elif blend_mode == "VERTEX":          
-            i = 0    
-            for mat in materials:
-                attr_name = "_upm: "+active_object.name+" - "+mat.name
-                active_object.ll_materials[i].color_attr = attr_name
-                i += 1
+        elif blend_mode == "VERTEX":           
+            for layer in obj.uberpaint.layers:
+                attr_name = f"_upm: {obj.name} - {layer.name} ({layer.id})"
+                layer.color_attr = attr_name
             
             i = 0 
-            ngroups = active_object.data.vertex_colors
-            valid_vcols = [vcol.name for vcol in ngroups if vcol.name.startswith('_upm: '+active_object.name+" - ")]      
-            vcols_to_add = {mat.color_attr for mat in active_object.ll_materials}
+            ngroups = obj.data.vertex_colors
+            valid_vcols = [vcol.name for vcol in ngroups if vcol.name.startswith('_upm: '+obj.name+" - ")]      
+            vcols_to_add = {mat.color_attr for mat in obj.uberpaint.layers}
 
             for vcol in vcols_to_add:
                 if (vcol not in valid_vcols):
-                    avc = active_object.data.vertex_colors.new(name=vcol)  
+                    avc = obj.data.vertex_colors.new(name=vcol)  
                     # Set vertex colors to black on all but bottom layer
                     for loop in mesh_dat.loops:
                         avc.data[loop.index].color = (0, 0, 0, 1.0) 
-                if not self.action:
-                    if active_object.ll_materials[len(materials)-1].color_attr == vcol:
+                if not self.isupdate:
+                    if obj.uberpaint.layers[len(obj.uberpaint.layers)-1].color_attr == vcol:
                         avc = mesh_dat.vertex_colors[vcol]
                         for loop in mesh_dat.loops:
                             avc.data[loop.index].color = (1, 1, 1, 1.0)   
                 i+=1
             
         wm.progress_update(50)
+        
         ##############################################
         # This is where the magic happens.  Adding the node groups to the material
+            
+        #is_tex = True if blend_mode == "TEXTURE" else (False if blend_mode == "VERTEX" else None)
+        rep=0      
         mixer_groups = []
         converted_mats = []
+        prev_layers = {}
+        for layer in obj.uberpaint.layers:     
+            mixer_name = f"{layer.name} Mixer ({obj.name}) {layer.id}" 
+            layer_mixer = up_mixer_node_group(obj, layer, mixer_name, "_upm_paintUVs", self)
+            layer.mixer_group = layer_mixer
+            mixer_groups.append(layer_mixer)
+            
+            layer_group = None
+            if layer.type == 'MATERIAL':
+                material_key = layer.material.name
+                if material_key in prev_layers:
+                    layer_group = prev_layers[material_key]
+                else:
+                    layer_group = material_to_group(layer.material, obj.name)
+                    prev_layers[material_key] = layer_group
+                    
+            elif layer.type == 'PAINT':
+                layer_group = create_paint_layer(layer, obj)
+                
+            layer_group['_up_obj'] = obj.name
+            converted_mats.append(layer_group)
+        
         blend_mat = bpy.data.materials.new(blend_mat_name)
         blend_mat.use_nodes = True
+        print(converted_mats)
         if bl_version < (4, 1, 0):
-            blend_mat.cycles.displacement_method = active_object.ll_disp_mode
+            blend_mat.cycles.displacement_method = obj.uberpaint.displacement_mode
         else: 
-            blend_mat.displacement_method = active_object.ll_disp_mode
+            blend_mat.displacement_method = obj.uberpaint.displacement_mode
             
-        is_tex = True if blend_mode == "TEXTURE" else (False if blend_mode == "VERTEX" else None)
-        rep=0
-        
-        for m in materials:
-            mixer_name = "_up_"+m.name + " - " + active_object.name + "_mixer"   
-            
-            mixer_groups.append(up_mixer_node_group(mixer_name, is_tex, "_upm: "+active_object.name+" - "+m.name, "_upm_paintUVs", active_object.ll_materials[rep].image_texture, active_object.ll_materials[rep].mask_source, self))
-            layer_group = material_to_group(m, active_object.name)
-            converted_mats.append(layer_group)
-            active_object.ll_materials[rep].mixer_group = mixer_groups[rep]
-            get_active_layer(context).mixer_group
-            
-            rep+=1
-        
         bg_col = context.preferences.addons[__name__].preferences.bg_color
         up_blendmat_node_group(blend_mat, converted_mats, mixer_groups, bg_col)
             
-        scene.target.has_mask = True
-        blend_mat.use_nodes = True
+            
+        for layer in obj.uberpaint.layers:
+            if layer.type == 'MATERIAL':
+                if layer.mixer_group.nodes['disp_blending_tex'] and len(find_disp_texture(layer.material)) > 0:                
+                    layer.mixer_group.nodes['disp_blending_tex'].image = find_disp_texture(layer.material)[-1] # Return last item
+            
+            
+        scene.uberpaint.target.uberpaint.has_mask = True
         
-        active_object.data.materials.append(blend_mat)
-        scene.target.ll_blend_material = blend_mat
+        blend_mat['_up_bmat'] = True
+        obj.data.materials.append(blend_mat)
+        scene.uberpaint.target.uberpaint.blend_mat = blend_mat
         
         # Add all source materials so they can be previewed/easily edited
         for mat in materials:
             if mat:
-                active_object.data.materials.append(mat)  # Add material slot
+                obj.data.materials.append(mat)  # Add material slot
                 
         wm.progress_update(100)
         wm.progress_end()
-        bpy.ops.ed.undo_push()        
+        bpy.ops.ed.undo_push()    
+        
         self.report({'INFO'}, "Material Created Successfully")        
         return {'FINISHED'}
 
 
-class UP_OT_ManageMaterials(bpy.types.Operator):
-    bl_idname = "ll.manage_material"
-    bl_label = "Manage Material"
+class UP_OT_ManageLayers(bpy.types.Operator):
+    """Reorder, add, or remove a layer"""
+    bl_idname = "up.manage_layers"
+    bl_label = "Manage Layer"
     action: bpy.props.EnumProperty(
         items=[
             ('ADD', "Add", "Add a new material"),
@@ -475,97 +649,122 @@ class UP_OT_ManageMaterials(bpy.types.Operator):
 
     def execute(self, context):
         scene = context.scene
-        materials = scene.target.ll_materials
-        index = scene.target.ll_material_index
+        obj = scene.uberpaint.target
+        layers = obj.uberpaint.layers
+        layer_index = obj.uberpaint.layer_index
+
         if self.action == 'ADD':
-            new_mat = materials.add()
+            new_mat = layers.add()
+            
+            collection = layers 
+            base_name = "Layer"
+            new_name = base_name
+            counter = 1
+            # Find a unique name
+            while any(item.name == new_name for item in layers):
+                new_name = f"{base_name} {counter}"
+                counter += 1
+            
             new_mat.material = None
-            scene.target.ll_material_index = len(materials) - 1
-        elif self.action == 'REMOVE' and index >= 0:
-            materials.remove(index)
-            scene.target.ll_material_index = max(0, index - 1)
-        elif self.action == 'UP' and index > 0:
-            materials.move(index, index - 1)
-            scene.target.ll_material_index -= 1
-        elif self.action == 'DOWN' and index < len(materials) - 1:
-            materials.move(index, index + 1)
-            scene.target.ll_material_index += 1
-        
-        if scene.target.has_mask and self.action != 'ADD':
-            if index < len(scene.target.ll_materials):
-                if scene.target.ll_materials[index].material is not None:
-                    bpy.ops.ll.generate_material(action=True)
+            new_mat.name = new_name       
+            
+            # Generate a new ID for each layer           
+            new_mat.id = generate_id(layers)   
+            
+            obj.uberpaint.layer_index = len(layers) - 1
+            layers.move(obj.uberpaint.layer_index, 0)
+            obj.uberpaint.layer_index = 0
+            
+        elif self.action == 'REMOVE' and layer_index >= 0:
+            layers.remove(layer_index)
+            obj.uberpaint.layer_index  = max(0, layer_index - 1)
+        elif self.action == 'UP' and layer_index > 0:
+            layers.move(layer_index, layer_index - 1)
+            obj.uberpaint.layer_index  -= 1
+        elif self.action == 'DOWN' and layer_index < len(layers) - 1:
+            layers.move(layer_index, layer_index + 1)
+            obj.uberpaint.layer_index  += 1
+
+        if scene.uberpaint.target.uberpaint.has_mask and self.action != 'ADD':
+            if layer_index < len(layers):
+                if layers[layer_index].material is not None:
+                    bpy.ops.up.generate_material(isupdate=True)
         
         return {'FINISHED'}
 
 
 class UP_OT_RebuildSourceGroup(bpy.types.Operator):
     """Refresh the current source material's node tree"""
-    bl_idname = "ll.rebuild_src"
+    bl_idname = "up.rebuild_src"
     bl_label = "Rebuild Group"
     
     def execute(self, context): 
         scene = context.scene
-        obj = scene.target
-        materials = [entry.material for entry in obj.ll_materials if entry.material]    
-        mat_index = obj.active_material_index
-        blend_mat = obj.ll_blend_material
+        obj = scene.uberpaint.target
+        # materials = [entry.material for entry in obj.uberpaint.layers if entry.material]    
+        # mat_index = obj.active_material_index
+        # blend_mat = obj.uberpaint.blend_mat
+        screen = bpy.context.window.screen
+        area = next((a for a in screen.areas if a.type == 'NODE_EDITOR'), None)
+        space = area.spaces[0]
         
-        material = obj.active_material
-        group_name = str(f"_up_{obj.name} - {material.name}")
-        for node in blend_mat.node_tree.nodes:
-            if node.type == 'GROUP':
-                if node.node_tree.name == group_name:
-                    bpy.data.node_groups.remove(bpy.data.node_groups[group_name]) 
-                    layer_group = material_to_group(material, obj.name)
-                    blend_mat.node_tree.nodes[group_name].node_tree = layer_group
-                  
-                    self.report({'INFO'}, f"Blend Material Updated: {material.name}")        
+        old_material_index = obj.active_material_index  # Store the current material slot index
+        old_material_name = obj.active_material.name   # Optional: For debugging/logging
+
+        space.node_tree = bpy.data.materials[old_material_name].node_tree
+        space.pin = True
+
+        if scene.uberpaint.target.uberpaint.has_mask:
+            bpy.ops.up.generate_material(isupdate=True)  # This may change the active material
+            # Restore the originally selected material slot
+            obj.active_material_index = old_material_index
+
+        # Unpin current material (now the original one is active again)
+        space.pin = False
+              
         return {'FINISHED'}
 
 
 class UP_OT_RemoveMaterial(bpy.types.Operator):
     """Remove and clean up the target object's blend materal"""
-    bl_idname = "ll.remove_material"
+    bl_idname = "up.remove_material"
     bl_label = "Remove Blend Material"
     
     isupdate: bpy.props.BoolProperty(False) # False for full removal, true for updates
     
     def execute(self, context):
         scene = context.scene
-        active_object = bpy.context.scene.target
-        blend_mode = context.scene.target.ll_blend_mode
-        materials = [entry.material for entry in scene.target.ll_materials if entry.material]
+        obj = bpy.context.scene.uberpaint.target
+        blend_mode = context.scene.uberpaint.target.uberpaint.mask_type
+        materials = [entry.material for entry in scene.uberpaint.target.uberpaint.layers if entry.material]
         isupdate = self.isupdate
         
         # Check if the target already has a blend mat
-        if scene.target.has_mask == False:
+        if scene.uberpaint.target.uberpaint.has_mask == False:
             return {'CANCELLED'}
         
-        active_object.select_set(True)
-        bpy.context.view_layer.objects.active = active_object
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
         bpy.ops.object.select_all(action='DESELECT')
-        active_object.select_set(True)
+        obj.select_set(True)
         
-        m = active_object.ll_blend_material
+        m = obj.uberpaint.blend_mat
         if not m:
             self.report({'WARNING'}, "We couldn't find the blend material. Did you delete it? Try regenerating.")
-            scene.target.has_mask = False
-            bpy.ops.active_object.material_slot_remove()
+            scene.uberpaint.target.uberpaint.has_mask = False
             return {'CANCELLED'}
-        
         
         bpy.data.materials.remove(m)
         bpy.ops.object.material_slot_remove()
         
         # Remove UVs :D
-        if not(isupdate) and '_upm_paintUVs' in active_object.data.uv_layers:
-            uv_layer = active_object.data.uv_layers['_upm_paintUVs']
-            active_object.data.uv_layers.remove(layer=uv_layer)
+        if not(isupdate) and '_upm_paintUVs' in obj.data.uv_layers:
+            uv_layer = obj.data.uv_layers['_upm_paintUVs']
+            obj.data.uv_layers.remove(layer=uv_layer)
         
         # Remove Image Textures
-        upm_images = [img for img in bpy.data.images if img.name.startswith("_upm: "+active_object.name+" - ")]
-        obj_texs = [entry.image_texture for entry in active_object.ll_materials if entry.image_texture] 
+        upm_images = [img for img in bpy.data.images if img.name.startswith("_upm: "+obj.name+" - ")]
+        obj_texs = [entry.image_texture for entry in obj.uberpaint.layers if entry.image_texture] 
         if upm_images:
             if isupdate:
                 for img in upm_images:
@@ -573,20 +772,20 @@ class UP_OT_RemoveMaterial(bpy.types.Operator):
                         bpy.data.images.remove(img)  # Remove the image
             else:
                 for img in bpy.data.images:
-                    if img.name.startswith('_upm: '+active_object.name+" - "):
+                    if img.name.startswith('_upm: '+obj.name+" - "):
                         bpy.data.images.remove(img)
         
         # # Remove Color Attributes :D
-        vcol_layers = active_object.data.vertex_colors
-        vcols = [vcol for vcol in vcol_layers if vcol.name.startswith('_upm: '+active_object.name+" - ")]      
-        if hasattr(active_object.data, "vertex_colors") and len(vcols)>0: # and active_object.ll_blend_mode == "VERTEX":
-            obj_clrs = [entry.color_attr for entry in active_object.ll_materials if entry.color_attr] 
+        vcol_layers = obj.data.vertex_colors
+        vcols = [vcol for vcol in vcol_layers if vcol.name.startswith('_upm: '+obj.name+" - ")]      
+        if hasattr(obj.data, "vertex_colors") and len(vcols)>0: # and obj.mask_type == "VERTEX":
+            obj_clrs = [entry.color_attr for entry in obj.uberpaint.layers if entry.color_attr] 
             vcols = []
             for color_attr in obj_clrs:
-                vcols.append(active_object.data.vertex_colors[color_attr])
+                vcols.append(obj.data.vertex_colors[color_attr])
             vcols.reverse()
             
-            vt_colors = active_object.data.vertex_colors
+            vt_colors = obj.data.vertex_colors
             
             if isupdate:  
                 rep = 0
@@ -595,46 +794,63 @@ class UP_OT_RemoveMaterial(bpy.types.Operator):
                         vt_colors.remove(vcol)
                         rep+=1
             else:
-                vcol_layers = active_object.data.vertex_colors
-                vcols = [vcol for vcol in vcol_layers if vcol.name.startswith('_upm: '+active_object.name+" - ")]
+                vcol_layers = obj.data.vertex_colors
+                vcols = [vcol for vcol in vcol_layers if vcol.name.startswith('_upm: '+obj.name+" - ")]
                 vcols.reverse() # Do this or else strange things happen
                 for vcol in vcols:
                     vt_colors.remove(vcol)
                         
-        # Remove node groups
-        ngroups = bpy.data.node_groups
-        ngroups_to_remove = [ngroup for ngroup in ngroups if (ngroup.name.startswith('_up_'+active_object.name+" - ") or ngroup.name.endswith(active_object.name+"_mixer") or ngroup.name.startswith('_up_mask_fx'))]      
-        valid_mixer_groups = {mat.mixer_group.name for mat in active_object.ll_materials if mat.mixer_group}
+        # Remove node groups 
+        print(f"UberPaint: Removing node groups for {obj.name}")
         
-        for ngroup in ngroups_to_remove:
-            if not isupdate or (ngroup.name not in valid_mixer_groups):
-                if ngroup.name.startswith("_up_mask_fx"):
-                    if ngroup.users == 0:
-                        bpy.data.node_groups.remove(ngroup) 
-                else:
-                    bpy.data.node_groups.remove(ngroup)    
+        # Clear PointerProperties
+        if not isupdate:
+            for layer in obj.uberpaint.layers:
+                layer.mixer_group = None
+                layer.paint_group = None
+                #layer.material = None
+                layer.image_texture = None
+                layer.paint_group = None
+                # obj.uberpaint.layers.remove(layer.index)
                 
+        for ngroup in bpy.data.node_groups:
+            if '_up_obj' in ngroup:
+                if ngroup['_up_obj'] == obj.name:
+                    print('found a node group for obj'+str(ngroup['_up_obj']))
+                    if '_up_type' in ngroup:
+                        print('found a node group'+str(ngroup['_up_obj']))
+                        if ngroup['_up_type'] == 'MIXER' or ngroup['_up_type'] == 'PAINT': # Remove these only if not isupdate
+                            if not isupdate:
+                                print(f"removed a node group: {ngroup.name}")
+                                bpy.data.node_groups.remove(ngroup) 
+                        elif ngroup['_up_type'] == 'MATERIAL':
+                            bpy.data.node_groups.remove(ngroup) 
+            
+            for ngroup in bpy.data.node_groups:
+                if ngroup.name == '_up_mask_fx' and ngroup.users == 0:
+                    bpy.data.node_groups.remove(ngroup) 
+                            
         # Finalize Transaction
         if not isupdate:
+            obj.uberpaint.has_mask = False
             bpy.ops.ed.undo_push()  
-            
-        scene.target.has_mask = False
-        self.report({'INFO'}, "Material Removed Successfully")
+            self.report({'INFO'}, "Material Removed Successfully")
+
         return {'FINISHED'}
 
 
 class UP_OT_PaintMode(bpy.types.Operator):
     """Toggle painting mode for this layer"""
-    bl_idname = "ll.enter_paint_mode"
+    bl_idname = "up.enter_paint_mode"
     bl_label = "Paint Layer"
     
     input_index : IntProperty(default=0)
     def execute(self, context):
         scene = context.scene
-        active_object = bpy.context.scene.target
-        blend_mode = scene.target.ll_blend_mode
-        materials = [entry.material for entry in scene.target.ll_materials if entry.material]
-        aod = active_object.data
+        obj = bpy.context.scene.uberpaint.target
+        blend_mode = scene.uberpaint.target.uberpaint.mask_type
+        materials = [entry.material for entry in scene.uberpaint.target.uberpaint.layers if entry.material]
+        aod = obj.data
         input_index = self.input_index
         current_layer = 0
         
@@ -642,43 +858,46 @@ class UP_OT_PaintMode(bpy.types.Operator):
         if blend_mode == "TEXTURE":
             if bpy.context.object.mode == 'OBJECT':
                 bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
-                bpy.context.scene.tool_settings.image_paint.canvas = active_object.ll_materials[input_index].image_texture
+                bpy.context.scene.tool_settings.image_paint.canvas = obj.uberpaint.layers[input_index].image_texture
                 bpy.context.scene.tool_settings.image_paint.mode = 'IMAGE'
-
+                
+                if obj.uberpaint.layers[input_index].type == 'MATERIAL':
+                    brush = bpy.context.tool_settings.image_paint.brush
+                    brush.color = (1.0, 1.0, 1.0)
+                    brush.secondary_color = (0.0, 0.0, 0.0)
                 
             elif bpy.context.object.mode == 'TEXTURE_PAINT':
-                if input_index == active_object.ll_material_index:
+                if input_index == obj.uberpaint.layer_index:
                     bpy.ops.object.mode_set(mode='OBJECT')
                 else:
-                    bpy.context.scene.tool_settings.image_paint.canvas = active_object.ll_materials[input_index].image_texture
+                    bpy.context.scene.tool_settings.image_paint.canvas = obj.uberpaint.layers[input_index].image_texture
         elif blend_mode == "VERTEX":
             if bpy.context.object.mode == 'OBJECT':
-                aod.vertex_colors.active = aod.vertex_colors[active_object.ll_materials[input_index].color_attr]
+                aod.vertex_colors.active = aod.vertex_colors[obj.uberpaint.layers[input_index].color_attr]
                 bpy.ops.object.mode_set(mode='VERTEX_PAINT')
                 
             elif bpy.context.object.mode == 'VERTEX_PAINT':
-                if input_index == active_object.ll_material_index:
+                if input_index == obj.uberpaint.layer_index:
                     bpy.ops.object.mode_set(mode='OBJECT')
                 else:
-                    aod.vertex_colors.active = aod.vertex_colors[active_object.ll_materials[input_index].color_attr]
+                    aod.vertex_colors.active = aod.vertex_colors[obj.uberpaint.layers[input_index].color_attr]
                     
         current_layer = input_index
-        active_object.ll_material_index = input_index # Select the layer we're painting
+        obj.uberpaint.layer_index = input_index # Select the layer we're painting
         return {'FINISHED'}
 
 
 class UP_OT_EditSource(bpy.types.Operator):
     """Edit this material. Affects the material for all users."""
-    bl_idname = "ll.edit_source"
+    bl_idname = "up.edit_source"
     bl_label = "Edit Source Material"
     
     input_index : IntProperty(default=1)
-
-                                
+                           
     def execute(self, context):
         scene = context.scene
-        obj = scene.target
-        materials = [entry.material for entry in obj.ll_materials if entry.material]
+        obj = scene.uberpaint.target
+        materials = [entry.material for entry in obj.uberpaint.layers if entry.material]
         aod = obj.data
         input_index = self.input_index
         
@@ -706,60 +925,82 @@ class UP_OT_EditSource(bpy.types.Operator):
                     break
         
         current_layer = input_index
-        obj.ll_material_index = input_index # Select the layer we're editing
+        obj.uberpaint.layer_index = input_index # Select the layer we're editing
+        return {'FINISHED'}
+
+
+class UP_OT_CopyLayers(bpy.types.Operator):
+    """Copy the layers from another object to the current target."""
+    bl_idname = "up.copy_layers"
+    bl_label = "Copy Layers"
+
+    def execute(self, context):
+        scene = context.scene
+        obj = context.active_object
+        target = scene.uberpaint.target
+        copy_layers(obj, target)
         return {'FINISHED'}
 
 
 class UP_OT_SetTargetObject(bpy.types.Operator):
     """Set the UberPaint target object to the active object in viewport"""
-    bl_idname = "ll.set_target"
+    bl_idname = "up.set_target"
     bl_label = "Set Target Object"
     def execute(self, context):
         scene = context.scene
-        scene.target = context.active_object
+        scene.uberpaint.target = context.active_object
         self.report({'INFO'}, "Target object set to active object")
         return {'FINISHED'}
 
 
 class UP_UL_MaterialList(bpy.types.UIList):
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        
-    # Add seperate icons for texture vs. vertex painting
-        scene = context.scene
-        blend_mode = scene.target.ll_blend_mode
-        mode_icon = None
-        
-        if blend_mode == "TEXTURE":
-            mode_icon = "TPAINT_HLT"
-        elif blend_mode == "VERTEX":
-            mode_icon = "VPAINT_HLT"
-        if (bpy.context.object.mode == "TEXTURE_PAINT" or bpy.context.object.mode == "VERTEX_PAINT") and scene.target.ll_material_index == index:  # Are we in texture paint mode and is the active layer selected?
-            mode_icon = "BRUSH_DATA"
-    # Draw layers UIlist  
-        if index == scene.target.ll_material_index:
-            layout.label(text="", icon="RADIOBUT_ON")
-        else:
-            layout.label(text="", icon="RADIOBUT_OFF")
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):       
+        if item:
+            # Add separate icons for texture vs. vertex painting
+            scene = context.scene
+            blend_mode = scene.uberpaint.target.uberpaint.mask_type
+            mode_icon = None
             
-        layergroup = item
-        layout.prop(layergroup, "material", text="")
-        
-        row = layout.row()
-        has_blend_mat = scene.target.has_mask
-        
-        if has_blend_mat == True:
-            row.enabled = True
-        elif has_blend_mat == False:
-            row.enabled = False
+            if blend_mode == "TEXTURE":
+                mode_icon = "TPAINT_HLT"
+            elif blend_mode == "VERTEX":
+                mode_icon = "VPAINT_HLT"
+            if (bpy.context.object.mode == "TEXTURE_PAINT" or bpy.context.object.mode == "VERTEX_PAINT") and scene.uberpaint.target.uberpaint.layer_index == index:  # Are we in texture paint mode and is the active layer selected?
+                mode_icon = "BRUSH_DATA" 
+            if index == scene.uberpaint.target.uberpaint.layer_index:
+                layout.label(text="", icon="RADIOBUT_ON")
+            else:
+                layout.label(text="", icon="RADIOBUT_OFF")
+                
+            layergroup = item
             
-        # layout.prop(layergroup, "opacity", text="Opacity", slider=True)  
-        # Paint mode button
-        op = row.operator("ll.enter_paint_mode", icon = mode_icon, text="")
-        op.input_index = index
-        
-        # Edit source material button
-        op = row.operator("ll.edit_source", icon = "GREASEPENCIL", text="")
-        op.input_index = index
+            row = layout.row()
+            row.enabled = (context.object.mode == 'OBJECT')
+            layer_icon = get_layer_icon(index)
+            row.prop(layergroup, "type", text="", icon=layer_icon, emboss=False, icon_only=True)
+            
+            if layergroup.type == 'MATERIAL':
+                layout.prop(layergroup, "name", text="", emboss=False)
+                layout.prop(layergroup, "material", text="")
+            elif layergroup.type == 'PAINT':
+                layout.prop(layergroup, "name", text="", emboss=False)
+            
+            row = layout.row()
+            has_blend_mat = scene.uberpaint.target.uberpaint.has_mask
+            
+            if has_blend_mat == True:
+                row.enabled = True
+            elif has_blend_mat == False:
+                row.enabled = False
+                
+            # Edit source material button
+            if layergroup.type == 'MATERIAL':
+                op = row.operator("up.edit_source", icon = "GREASEPENCIL", text="")
+                op.input_index = index
+                
+            # Paint mode button
+            op = row.operator("up.enter_paint_mode", icon = mode_icon, text="")
+            op.input_index = index
 
 
 class WM_OT_SettingsMenu(bpy.types.Operator):
@@ -767,28 +1008,25 @@ class WM_OT_SettingsMenu(bpy.types.Operator):
     bl_label = "Paint Mask Texture Settings"
     bl_idname = "wm.settingsmenu"
     
-    
-    #res_x : bpy.props.IntProperty(name="Resolution", default = 1024)
-    
     def draw(self, context):
         layout = self.layout
         scene = context.scene
-        obj = scene.target
+        obj = scene.uberpaint.target
         
         warning_size = 512
         
         row=layout.row()
-        row.prop(obj, "ll_blend_mode", text="")
+        row.prop(obj, "mask_type", text="")
         info=row.operator('wm.info', text ="", icon="QUESTION")
         info.message1="Painting Mode"
         info.message2="Image textures can work on models of any geometry density, but vertex colors work in real time in Cycles."
         
         row=layout.row()
-        mask_res = row.prop(scene, "ll_texture_resolution", text = "Mask Texture Size")
+        mask_res = row.prop(scene.uberpaint, "texture_resolution", text = "Mask Texture Size")
         
-        settings_overview = str(scene.ll_texture_resolution) + " x " + str(scene.ll_texture_resolution)
+        settings_overview = str(scene.uberpaint.texture_resolution) + " x " + str(scene.uberpaint.texture_resolution)
         layout.label(text=settings_overview)
-        if scene.ll_texture_resolution > warning_size:
+        if scene.texture_resolution > warning_size:
             layout.label(icon="ERROR", text="Sizes over "+str(warning_size)+"px are usually unecessary and can result in lag when painting.")
 
     def execute(self, context):
@@ -799,72 +1037,42 @@ class WM_OT_SettingsMenu(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self)
 
 
-def update_blendmat(self, context):
-    bpy.ops.ll.generate_material(action=True)
+class UP_SceneProps(bpy.types.PropertyGroup):  
+    target: bpy.props.PointerProperty(type=bpy.types.Object, poll=obj_filter)
+    texture_resolution: bpy.props.IntProperty(default=512)
 
-
-class UP_MaterialEntry(bpy.types.PropertyGroup):
-    material: bpy.props.PointerProperty(type=bpy.types.Material)
-    image_texture: bpy.props.PointerProperty(type=bpy.types.Image)
-    color_attr: StringProperty(default="")
-    mixer_group: bpy.props.PointerProperty(type=bpy.types.ShaderNodeTree) 
+class UP_LayerProps(bpy.types.PropertyGroup):
+    name: StringProperty(default="Layer")
+    id: StringProperty(default="")
+    type: bpy.props.EnumProperty(name="Layer Type", description="Layers can represent materials and color paintings.  Set here.",
+    items=[
+        ('MATERIAL', "Material (Default)", "Paint material using a mask"),
+        ('PAINT', "Paint", "Colorable custom paint layer; Ideal for graffiti"),
+        #('GENERATOR', "Generator", "Use procedurals for coloring and displacement")
+        ],
+    default='MATERIAL', update=update_blendmat)
+    material: bpy.props.PointerProperty(type=bpy.types.Material, poll=mat_filter)
     opacity: bpy.props.FloatProperty(name="opacity", default=1, min=0, max=1)
     mask_source: bpy.props.EnumProperty(name="Mask Source", description="Source that this layer's mask is derived from",
     items=[
-        ('PAINT', "Paint (Default)", "Use painted mask for blending"),
+        ('PAINT', "Paint Mask (Default)", "Use painted mask for blending"),
         ('AO', "Ambient Occlusion", "Use AO as the source, ideal for grunge"),
         ('NOISE', "Noise Texture", "Use a noise texture as the mask source")],
-    default='PAINT', update=update_blendmat)
+    default='PAINT', update=update_blendmat)   
+    # Object specific properties
+    image_texture: bpy.props.PointerProperty(type=bpy.types.Image)
+    color_attr: StringProperty(default="")
+    mixer_group: bpy.props.PointerProperty(type=bpy.types.ShaderNodeTree) 
+    paint_group: bpy.props.PointerProperty(type=bpy.types.ShaderNodeTree) 
 
-###########################################################
-# Functions
-###########################################################
-
-def get_active_layer(context):
-    """Retrieve the currently active layer based on index."""
-    scene = context.scene
-    target = scene.target 
-    if hasattr(target, "ll_materials") and len(target.ll_materials) > target.ll_material_index:
-        return target.ll_materials[target.ll_material_index]
-    return None
-
-def update_tweaks(self, context):
-    scene = context.scene
-    material = self.material
-                                
-###########################################################
-# Registration
-###########################################################
-
-classes = [
-    UP_UL_MaterialList,
-    UP_PT_MainPanel,
-    UP_PT_PropsPanel,
-    UP_OT_ManageMaterials,
-    UP_OT_RebuildSourceGroup,
-    UP_OT_GenerateMaterial,
-    UP_OT_RemoveMaterial,
-    UP_MaterialEntry,
-    WM_OT_SettingsMenu,
-    WM_OT_InfoBox,
-    UP_OT_PaintMode,
-    UP_PT_PreferencesPanel,
-    UP_OT_SetTargetObject,
-    UP_PT_SupportPanel,
-    UP_PT_ShaderPanel,
-    UP_OT_EditSource
-]
-
-def register():
-    for cls in classes:
-        bpy.utils.register_class(cls)
-    bpy.types.Object.ll_materials = bpy.props.CollectionProperty(type=UP_MaterialEntry)
-    bpy.types.Object.ll_material_index = bpy.props.IntProperty(default=0)
+class UP_ObjectProps(bpy.types.PropertyGroup):
+    layers: bpy.props.CollectionProperty(type=UP_LayerProps)
+    layer_index: bpy.props.IntProperty(default=0)
     
-    bpy.types.Object.ll_blend_material = bpy.props.PointerProperty(type=bpy.types.Material)
+    blend_mat: bpy.props.PointerProperty(type=bpy.types.Material)
     
-    bpy.types.Scene.ll_texture_resolution = bpy.props.IntProperty(default=256) # scene var
-    bpy.types.Object.ll_blend_mode = bpy.props.EnumProperty(
+    texture_resolution: bpy.props.IntProperty(default=512) # scene var
+    mask_type: bpy.props.EnumProperty(
         name="Blend Mode",
         description="Choose blending method",
         items=[
@@ -874,7 +1082,7 @@ def register():
         default='VERTEX', 
     )
     
-    bpy.types.Object.ll_disp_mode = bpy.props.EnumProperty(
+    displacement_mode: bpy.props.EnumProperty(
     name="Displacement Mode",
     description="Choose shader displacement method",
     items=[
@@ -883,20 +1091,52 @@ def register():
         ('BOTH', "Displacement and Bump", "")
     ],
     default='BUMP', update=update_blendmat
-    )
-    
-    bpy.types.Object.has_mask = bpy.props.BoolProperty(
+    )   
+    has_mask: bpy.props.BoolProperty(
     name="Has Mask",
     description="Indicates whether this object has a mask",
     default=False)
 
+
+###########################################################
+# Registration
+###########################################################
+
+classes = [
+    UP_LayerProps,
+    UP_ObjectProps,
+    UP_SceneProps,
+    UP_UL_MaterialList,
+    UP_PT_MainPanel,
+    UP_PT_PropsPanel,
+    UP_OT_ManageLayers,
+    UP_OT_RebuildSourceGroup,
+    UP_OT_GenerateMaterial,
+    UP_OT_RemoveMaterial,
+    WM_OT_SettingsMenu,
+    WM_OT_InfoBox,
+    UP_OT_PaintMode,
+    UP_PT_PreferencesPanel,
+    UP_OT_SetTargetObject,
+    UP_PT_SupportPanel,
+    UP_PT_ShaderPanel,
+    UP_OT_EditSource,
+    UP_OT_CopyLayers,
+]
+
+def register():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+    bpy.types.Object.uberpaint = bpy.props.PointerProperty(type=UP_ObjectProps)
+    bpy.types.Scene.uberpaint = bpy.props.PointerProperty(type=UP_SceneProps)
+    reload(up_materials)
+    
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    del bpy.types.Object.ll_materials
-    del bpy.types.Object.ll_material_index
-    del bpy.types.Object.ll_blend_mode
+        
+    del bpy.types.Object.uberpaint # Removes attributes on objects?  Find out.
+    del bpy.types.Scene.uberpaint
 
-  
 if __name__ == "__main__":
     register()
