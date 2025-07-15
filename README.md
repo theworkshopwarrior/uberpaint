@@ -10,7 +10,7 @@
 - Duplicate material entries no longer cause errors
 - UberPaint auto detects displacement maps from within the source materials, making displacement blending more convient for most users
 
-⚠ Note that there *are* several known issues that must be resolved before officially releasing this version.
+⚠ Note that there *are* several known issues that must be resolved before officially releasing this version.  Support is also currently limited to Blender 4.4.
 ## Overview
 
 UberPaint is an open-source Blender addon intended to dramatically simplify the process of painting materials.  Whereas it was previously necessary to make materials into node groups, manually add image textures, and blend it all together, UberPaint automatically handles all of that and provides a simple layer-based solution.  It supports both texture painting and vertex painting, and has advanced features such as displacement falloff blending.
@@ -31,7 +31,5 @@ https://www.youtube.com/watch?v=meX3cbtdVbI&t=8s
 **⚠ Current Limitations**
 - When a source material is edited, the changes are not reflected in UberPaint objects until the blend material is updated once again.
 - Updating/building blend materials can cause lag depending on quantity and complexity.
-  
-If you'd like to try something new, test the new alpha release!  [UberPaint Alpha 0.9.8 Alpha](https://github.com/theworkshopwarrior/uberpaint/tree/release/v0.9.8-alpha)
 
 Enjoy!
