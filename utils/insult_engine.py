@@ -60,8 +60,8 @@ goofy_insults = [
 
 # This is the function used to get a random insult at any time.
 
-def goofy_insult():
-    if use_goofy_insults and context.preferences.addons[__name__].preferences.use_goofy_insults:
+def goofy_insult(allow = True):
+    if use_goofy_insults and allow:
         return str(goofy_insults[int(uniform(0, len(goofy_insults)))])
     else:
         return ""
