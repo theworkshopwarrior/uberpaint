@@ -20,6 +20,6 @@ https://www.youtube.com/watch?v=meX3cbtdVbI&t=8s
 - When a source material is edited, the changes are not reflected in UberPaint objects until the blend material is updated once again.
 - Updating/building blend materials can cause lag depending on quantity and complexity.
   
-If you'd like to try something new, test the new alpha release!  [UberPaint Alpha 0.9.8 Alpha](https://github.com/theworkshopwarrior/uberpaint/tree/release/v0.9.8-alpha)
+If you'd like to try something new, test the new alpha release!  [UberPaint 0.9.8 Alpha](https://github.com/theworkshopwarrior/uberpaint/tree/release/v0.9.8-alpha)
 
 Enjoy!
