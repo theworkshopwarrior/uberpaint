@@ -3,7 +3,6 @@ from bpy import context
 
 # This is an easter egg feature intended to be humorous, but if you don't like it, you're welcome to turn it off here:
 use_goofy_insults = True
-addon_name = "UberPaint"
 #---------------
 # These are displayed when the user is presented with a warning. Though I must admit, ChatGPT is responsible for the conception of many of these brilliant insults.
 # Feel free to come up with more and add them, or submit them to me. @theworkshopwarrior on Discord :D
@@ -62,7 +61,7 @@ goofy_insults = [
 # This is the function used to get a random insult at any time.
 
 def goofy_insult():
-    if use_goofy_insults and context.preferences.addons[addon_name].preferences.use_goofy_insults:
+    if use_goofy_insults and context.preferences.addons[__name__].preferences.use_goofy_insults:
         return str(goofy_insults[int(uniform(0, len(goofy_insults)))])
     else:
         return ""
