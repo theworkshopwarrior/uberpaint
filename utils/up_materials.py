@@ -260,7 +260,6 @@ def up_mixer_node_group(obj, layer, name, uv_name, self):
         
     # Connect source node to mask_input
     if mask_src == "PAINT":
-        print('lalala paint')
         if istexture:
             image_tex = bpy.data.images[attr_name]
             if image_tex:

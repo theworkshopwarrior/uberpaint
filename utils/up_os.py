@@ -12,7 +12,6 @@ def import_node_tree(filename, node_tree_name, new_name, subfolder=""):
         blend_path = os.path.join(addon_dir, subfolder, filename)
     else:
         blend_path = os.path.join(addon_dir, filename)
-        print('n sub')
         
     blend_node_tree_path = os.path.join(blend_path, "NodeTree")
     
