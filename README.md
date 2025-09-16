@@ -1,6 +1,7 @@
 # UberPaint Guide
 
 ## CHANGELIST 0.9.8 (since 0.7):
+- Autosave texture paint images when exiting paint mode
 - Layer displacement intensity/offset sliders
 - Layers are now renamable
 - New layer type: Paint Layers allow for paint-like effects, e.g. graffiti
