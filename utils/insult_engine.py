@@ -69,7 +69,7 @@ goofy_insults = [
 # This is the function used to get a random insult at any time.
 
 def goofy_insult():
-    if use_goofy_insults and context.preferences.addons[__name__].preferences.use_goofy_insults:
+    if use_goofy_insults and context.preferences.addons['UberPaint'].preferences.use_goofy_insults:
         return str(goofy_insults[int(uniform(0, len(goofy_insults)))])
     else:
         return ""
