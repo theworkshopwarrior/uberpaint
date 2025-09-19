@@ -59,11 +59,6 @@ from bpy.types import (Operator,
 from .utils.insult_engine import goofy_insult
 from .utils import up_materials
 
-# Reloading - dev only #####################
-from importlib import reload
-reload(up_materials)
-# #########################################
-
 from .utils.up_materials import (
     up_mixer_node_group,
     up_blendmat_node_group, 
@@ -81,6 +76,9 @@ bl_version = bpy.app.version
 ###########################################################
 # Functions
 ###########################################################
+
+def UP_DEBUG(msg):
+    print(f"UberPaint Debug: {str(msg)}")
 
 def get_layer_icon(index):
     layer_type = bpy.context.scene.uberpaint.target.uberpaint.layers[index].type
@@ -152,9 +150,6 @@ def obj_filter(self, object):
     
     return True
 
-def UP_DEBUG(msg):
-    print(f"UberPaint Debug: {str(msg)}")
-
 def find_disp_texture(material):
     if not material or not material.use_nodes:
         return None
@@ -174,6 +169,13 @@ def find_disp_texture(material):
 
     return disp_textures
     
+# If object is deleted, remove it from UberPaint's properties
+def clean_invalid_refs(scene, depsgraph):
+    if hasattr(scene, "uberpaint"):
+        tgt = scene.uberpaint.target
+        if tgt and not tgt.users_scene: 
+            scene.uberpaint.target = None
+            UP_DEBUG("An UberPaint object was deleted from the scene")
 
 ###########################################################
 # Classes
@@ -1174,7 +1176,8 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Object.uberpaint = bpy.props.PointerProperty(type=UP_ObjectProps)
     bpy.types.Scene.uberpaint = bpy.props.PointerProperty(type=UP_SceneProps)
-    reload(up_materials)
+
+    bpy.app.handlers.depsgraph_update_post.append(clean_invalid_refs)
     
 def unregister():
     for cls in reversed(classes):
@@ -1182,6 +1185,9 @@ def unregister():
         
     del bpy.types.Object.uberpaint # Removes attributes on objects?  Find out.
     del bpy.types.Scene.uberpaint
+
+    if clean_invalid_refs in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(clean_invalid_refs)
 
 if __name__ == "__main__":
     register()
