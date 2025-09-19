@@ -273,6 +273,8 @@ class UP_PT_PropsPanel(bpy.types.Panel):
         scene = context.scene
         obj = context.scene.uberpaint.target   
         
+        layout.enabled = not scene.uberpaint.is_working
+
         if obj and obj.uberpaint.has_mask:
             active_layer = get_active_layer(context)  
             if active_layer:
@@ -1024,9 +1026,10 @@ class UP_UL_MaterialList(bpy.types.UIList):
             layer_icon = get_layer_icon(index)
             row.prop(layergroup, "type", text="", icon=layer_icon, emboss=False, icon_only=True)
             
-            if layergroup.type == 'MATERIAL':
-                layout.prop(layergroup, "name", text="", emboss=False)
-                layout.prop(layergroup, "material", text="")
+            if layergroup.type == 'MATERIAL':                
+                split = layout.split(factor=0.25, align=True)  # 40% name, 60% material
+                split.prop(layergroup, "name", text="", emboss=False)
+                split.prop(layergroup, "material", text="")
             elif layergroup.type == 'PAINT':
                 layout.prop(layergroup, "name", text="", emboss=False)
             
