@@ -77,6 +77,7 @@ bl_version = bpy.app.version
 # Functions
 ###########################################################
 
+# Log debug info to console
 def UP_DEBUG(msg):
     print(f"UberPaint Debug: {str(msg)}")
 
@@ -107,19 +108,12 @@ def get_active_layer(context):
     if hasattr(target.uberpaint, "layers") and len(target.uberpaint.layers) > target.uberpaint.layer_index:
         return target.uberpaint.layers[target.uberpaint.layer_index]
     return None
-
-def generate_id(layers):
-    letters = ['a', 'b', 'c', 'x', 'f']
-    id = str(int(uniform(1000, 9999))) + letters[int(uniform(0, len(letters)-1))]
-    while any(layer.id == id for layer in layers):
-        id = str(uniform(1000, 9999)) + letters[uniform(0, len(letters)-1)]     
-    return id
     
 def copy_layers(old, new):
     layers = old.uberpaint.layers
     for layer in layers:
         new_layer = new.uberpaint.layers.add()
-        new_layer.id = generate_id(new.uberpaint.layers)    
+        new_layer.id = generate_id()    
         new_layer.name = layer.name
         new_layer.type = layer.type
         new_layer.material = layer.material
@@ -176,6 +170,44 @@ def clean_invalid_refs(scene, depsgraph):
         if tgt and not tgt.users_scene: 
             scene.uberpaint.target = None
             UP_DEBUG("An UberPaint object was deleted from the scene")
+
+def generate_id():
+    layers = bpy.context.scene.uberpaint.target.uberpaint.layers
+    letters = ['a', 'b', 'c', 'x', 'f']
+    id = str(int(uniform(1000, 9999))) + letters[int(uniform(0, len(letters)-1))]
+    while any(layer.id == id for layer in layers):
+        id = str(uniform(1000, 9999)) + letters[uniform(0, len(letters)-1)]     
+    return id
+
+def create_id_name(obj, layer, type=""):
+    if not layer.id or layer.id == "":
+        layer.id = generate_id()
+    if type == 'MIXER':
+        name = f"{layer.name} Mixer ({obj.name}) {layer.id}" 
+        return name   
+    elif type == 'VCOL':
+        name = f"_upm:{obj.name} - {layer.name}_{layer.id}"
+        return name
+    else:
+        name = f"_upm: {obj.name} - {layer.name} ({layer.id})"
+        return name  
+
+def rename_layer(self, context):
+    target = context.scene.uberpaint.target
+    
+    if target.uberpaint.mask_type == "TEXTURE":
+        self.image_texture.name = create_id_name(target, self, "IMAGE")
+        UP_DEBUG("Renamed image texture to " + self.image_texture.name)
+
+    elif target.uberpaint.mask_type == "VERTEX":
+        vcol_index = next((i for i, vcol in enumerate(target.data.color_attributes) if vcol.name == self.color_attr), -1)
+        if 0 <= vcol_index < len(target.data.color_attributes):
+            vcol = target.data.color_attributes[vcol_index]
+            vcol.name = create_id_name(target, self, "VCOL")
+            self.color_attr = vcol.name
+            UP_DEBUG("Renamed color attribute to " + self.color_attr)  
+
+    self.mixer_group.name = create_id_name(target, self, "MIXER")
 
 ###########################################################
 # Classes
@@ -548,7 +580,8 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
                     scene.uberpaint.work_progress = 10
                 rep=0
                 for layer in obj.uberpaint.layers:
-                    attr_name = f"_upm: {obj.name} - {layer.name} ({layer.id})"
+                    #attr_name = f"_upm: {obj.name} - {layer.name} ({layer.id})"
+                    attr_name = create_id_name(obj, layer, type="IMAGE")
                     if not attr_name in bpy.data.images:
                         image_tex = bpy.data.images.new(attr_name, width=mask_res, height=mask_res)
                         
@@ -568,7 +601,7 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
                             
             elif blend_mode == "VERTEX":           
                 for layer in obj.uberpaint.layers:
-                    attr_name = f"_upm: {obj.name} - {layer.name} ({layer.id})"
+                    attr_name = create_id_name(obj, layer, type="VCOL")
                     layer.color_attr = attr_name
                 
                 i = 0 
@@ -602,7 +635,7 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
             converted_mats = []
             prev_layers = {}
             for layer in obj.uberpaint.layers:     
-                mixer_name = f"{layer.name} Mixer ({obj.name}) {layer.id}" 
+                mixer_name = create_id_name(obj, layer, type="MIXER")
                 layer_mixer = up_mixer_node_group(obj, layer, mixer_name, "_upm_paintUVs", self)
                 layer.mixer_group = layer_mixer
                 mixer_groups.append(layer_mixer)
@@ -707,7 +740,7 @@ class UP_OT_ManageLayers(bpy.types.Operator):
             new_mat.name = new_name       
             
             # Generate a new ID for each layer           
-            new_mat.id = generate_id(layers)   
+            new_mat.id = generate_id()   
             
             obj.uberpaint.layer_index = len(layers) - 1
             layers.move(obj.uberpaint.layer_index, 0)
@@ -816,7 +849,7 @@ class UP_OT_RemoveMaterial(bpy.types.Operator):
         # # Remove Color Attributes :D
         vcol_layers = obj.data.vertex_colors
         vcols = [vcol for vcol in vcol_layers if vcol.name.startswith('_upm: '+obj.name+" - ")]      
-        if hasattr(obj.data, "vertex_colors") and len(vcols)>0: # and obj.mask_type == "VERTEX":
+        if hasattr(obj.data, "vertex_colors") and len(vcols) > 0 and obj.mask_type == "VERTEX":
             obj_clrs = [entry.color_attr for entry in obj.uberpaint.layers if entry.color_attr] 
             vcols = []
             for color_attr in obj_clrs:
@@ -1092,7 +1125,7 @@ class UP_SceneProps(bpy.types.PropertyGroup):
     is_working: bpy.props.BoolProperty(default=False)
 
 class UP_LayerProps(bpy.types.PropertyGroup):
-    name: StringProperty(default="Layer")
+    name: StringProperty(default="Layer", update=rename_layer)
     id: StringProperty(default="")
     type: bpy.props.EnumProperty(name="Layer Type", description="Layers can represent materials and color paintings.  Set here.",
     items=[
