@@ -63,6 +63,8 @@ from .utils.up_materials import (
     create_paint_layer
 )
 
+import traceback
+
 # --- SETTINGS ---
 up_version = ".".join(map(str, bl_info["version"][:2]))
 up_info = "Alpha"
@@ -194,7 +196,7 @@ def create_id_name(obj, layer, type=""):
 
 def rename_layer(self, context):
     target = context.scene.uberpaint.target
-
+ 
     if self.type == 'PAINT':
         target.uberpaint.blend_mat.node_tree.nodes[self.paint_group.name].name = create_id_name(target, self, "PAINTER")
         self.paint_group.name = create_id_name(target, self, "PAINTER")
@@ -202,6 +204,7 @@ def rename_layer(self, context):
 
     if target.uberpaint.mask_type == "TEXTURE":
         self.image_texture.name = create_id_name(target, self, "IMAGE")
+        self.color_attr = create_id_name(target, self, "IMAGE")
         UP_DEBUG("Renamed image texture to " + self.image_texture.name)
 
     elif target.uberpaint.mask_type == "VERTEX":
@@ -216,6 +219,7 @@ def rename_layer(self, context):
                 self.paint_group.nodes['col_attr'].layer_name = vcol.name
     
             UP_DEBUG("Renamed color attribute to " + self.color_attr)  
+
     self.mixer_group.name = create_id_name(target, self, "MIXER")
 ###########################################################
 # Classes
@@ -530,9 +534,6 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
         blend_mode = context.scene.uberpaint.target.uberpaint.mask_type
         materials = [entry.material for entry in scene.uberpaint.target.uberpaint.layers if entry.material]       
         mesh_dat = obj.data
-            
-        scene.uberpaint.work_progress = 0
-        scene.uberpaint.is_working = True
 
         # Preliminary checks to avoid disaster
         if obj.type != "MESH":
@@ -549,6 +550,9 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
                 return {'CANCELLED'}            
         
         try:
+            scene.uberpaint.work_progress = 0
+            scene.uberpaint.is_working = True
+            
             if self.isupdate == True: 
                 bpy.ops.up.remove_material(isupdate=True)
                 
@@ -703,6 +707,8 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
         except Exception as e:
             self.report({'WARNING'}, "Something went wrong!  Please check the console for more info.")
             UP_DEBUG(f"Error occurred: {e}")
+            # DEV ONLY
+            traceback.print_exc()
             return {'CANCELLED'}
         
         finally:
