@@ -1124,7 +1124,7 @@ class WM_OT_SettingsMenu(bpy.types.Operator):
         
         settings_overview = str(scene.uberpaint.texture_resolution) + " x " + str(scene.uberpaint.texture_resolution)
         layout.label(text=settings_overview)
-        if scene.texture_resolution > warning_size:
+        if scene.uberpaint.texture_resolution > warning_size:
             layout.label(icon="ERROR", text="Sizes over "+str(warning_size)+"px are usually unecessary and can result in lag when painting.")
 
     def execute(self, context):
