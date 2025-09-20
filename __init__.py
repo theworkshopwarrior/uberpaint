@@ -15,7 +15,7 @@ links = {
         }
          
 #_TODO:_
-#
+# Fix broken material when no displacement socket on source material
 # _DONE:_
 #--- 0.9:
 # Displacement offset
@@ -33,6 +33,7 @@ links = {
 # Fix image/attribute when changing material
 # Allow paint layers to work on generation
 # Displacement blending textures are automatically added
+# Fix draw errors with object not selected
 
 # _IMPEDED:_
 # Don't open up popup if already up?
@@ -272,7 +273,7 @@ class UP_PT_MainPanel(bpy.types.Panel):
             
             # Layer generation button
             row = layout.row()
-            row.enabled = bpy.context.object.mode == "OBJECT"
+            row.enabled = obj.mode == "OBJECT"
             row.scale_y = 1.5
             
             # Vertex color paint layer warning
@@ -295,13 +296,13 @@ class UP_PT_MainPanel(bpy.types.Panel):
             
             # Layer deletion button
             row = layout.row()
-            row.enabled = scene.uberpaint.target.uberpaint.has_mask and bpy.context.object.mode == "OBJECT"
+            row.enabled = scene.uberpaint.target.uberpaint.has_mask and obj.mode == "OBJECT"
             row.operator("up.remove_material", text="Remove Blend Material", icon="TRASH")
             
             layout.separator()
             if scene.uberpaint.target.uberpaint.has_mask:
                 row = layout.row()
-                row.enabled = (bpy.context.object.mode == 'OBJECT')
+                row.enabled = (obj.mode == 'OBJECT')
                 row.prop(obj.uberpaint, "displacement_mode", text="Displacement Mode")
 
     
@@ -323,7 +324,7 @@ class UP_PT_PropsPanel(bpy.types.Panel):
             active_layer = get_active_layer(context)  
             if active_layer:
                 box = layout.box()
-                box.enabled = (bpy.context.object.mode == 'OBJECT')
+                box.enabled = (obj.mode == 'OBJECT')
                 mgroup = active_layer.mixer_group
                 box.prop(active_layer, 'name', text="Name")
                 box.prop(active_layer, 'type')
@@ -332,8 +333,8 @@ class UP_PT_PropsPanel(bpy.types.Panel):
                     box.prop(active_layer, "material", text="Source Material")
                     
                     box = layout.box()
-                    box.enabled = (bpy.context.object.mode == 'OBJECT')
-                    
+                    box.enabled = (obj.mode == 'OBJECT')
+
                     mask_src = active_layer.mask_source
                     box.prop(active_layer, 'mask_source')
                     
@@ -369,7 +370,7 @@ class UP_PT_PropsPanel(bpy.types.Panel):
                     
                 elif active_layer.type == 'PAINT': 
                     box = layout.box()
-                    box.enabled = (bpy.context.object.mode == 'OBJECT')
+                    box.enabled = (obj.mode == 'OBJECT')
                     
                     row = box.row()
                     
@@ -941,7 +942,7 @@ class UP_OT_PaintMode(bpy.types.Operator):
         
     # Toggle painting vs. object mode
         if blend_mode == "TEXTURE":
-            if bpy.context.object.mode == 'OBJECT':
+            if obj.mode == 'OBJECT':
                 bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
                 bpy.context.scene.tool_settings.image_paint.canvas = obj.uberpaint.layers[input_index].image_texture
                 bpy.context.scene.tool_settings.image_paint.mode = 'IMAGE'
@@ -950,8 +951,8 @@ class UP_OT_PaintMode(bpy.types.Operator):
                     brush = bpy.context.tool_settings.image_paint.brush
                     brush.color = (1.0, 1.0, 1.0)
                     brush.secondary_color = (0.0, 0.0, 0.0)
-                
-            elif bpy.context.object.mode == 'TEXTURE_PAINT':
+
+            elif obj.mode == 'TEXTURE_PAINT':
                 if input_index == obj.uberpaint.layer_index:
                     bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -966,11 +967,11 @@ class UP_OT_PaintMode(bpy.types.Operator):
                 else:
                     bpy.context.scene.tool_settings.image_paint.canvas = obj.uberpaint.layers[input_index].image_texture
         elif blend_mode == "VERTEX":
-            if bpy.context.object.mode == 'OBJECT':
+            if obj.mode == 'OBJECT':
                 aod.vertex_colors.active = aod.vertex_colors[obj.uberpaint.layers[input_index].color_attr]
                 bpy.ops.object.mode_set(mode='VERTEX_PAINT')
-                
-            elif bpy.context.object.mode == 'VERTEX_PAINT':
+
+            elif obj.mode == 'VERTEX_PAINT':
                 if input_index == obj.uberpaint.layer_index:
                     bpy.ops.object.mode_set(mode='OBJECT')
                 else:
@@ -1054,12 +1055,13 @@ class UP_UL_MaterialList(bpy.types.UIList):
             scene = context.scene
             blend_mode = scene.uberpaint.target.uberpaint.mask_type
             mode_icon = None
+            obj = scene.uberpaint.target
             
             if blend_mode == "TEXTURE":
                 mode_icon = "TPAINT_HLT"
             elif blend_mode == "VERTEX":
                 mode_icon = "VPAINT_HLT"
-            if (bpy.context.object.mode == "TEXTURE_PAINT" or bpy.context.object.mode == "VERTEX_PAINT") and scene.uberpaint.target.uberpaint.layer_index == index:  # Are we in texture paint mode and is the active layer selected?
+            if (obj.mode == "TEXTURE_PAINT" or obj.mode == "VERTEX_PAINT") and scene.uberpaint.target.uberpaint.layer_index == index:  # Are we in texture paint mode and is the active layer selected?
                 mode_icon = "BRUSH_DATA" 
             if index == scene.uberpaint.target.uberpaint.layer_index:
                 layout.label(text="", icon="RADIOBUT_ON")
@@ -1069,7 +1071,7 @@ class UP_UL_MaterialList(bpy.types.UIList):
             layergroup = item
             
             row = layout.row()
-            row.enabled = (context.object.mode == 'OBJECT')
+            row.enabled = (obj.mode == 'OBJECT')
             layer_icon = get_layer_icon(index)
             row.prop(layergroup, "type", text="", icon=layer_icon, emboss=False, icon_only=True)
             
