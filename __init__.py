@@ -185,13 +185,21 @@ def create_id_name(obj, layer, type=""):
     elif type == 'VCOL':
         name = f"_upm: {obj.name} - {layer.name}_{layer.id}"
         return name
+    elif type == 'PAINTER':
+        name = f"{layer.name} Paint ({obj.name}) {layer.id}"
+        return name
     else:
         name = f"_upm: {obj.name} - {layer.name} ({layer.id})"
         return name  
 
 def rename_layer(self, context):
     target = context.scene.uberpaint.target
-    
+
+    if self.type == 'PAINT':
+        target.uberpaint.blend_mat.node_tree.nodes[self.paint_group.name].name = create_id_name(target, self, "PAINTER")
+        self.paint_group.name = create_id_name(target, self, "PAINTER")
+        UP_DEBUG("Renamed paint group to " + self.paint_group.name)
+
     if target.uberpaint.mask_type == "TEXTURE":
         self.image_texture.name = create_id_name(target, self, "IMAGE")
         UP_DEBUG("Renamed image texture to " + self.image_texture.name)
@@ -203,10 +211,12 @@ def rename_layer(self, context):
             vcol.name = create_id_name(target, self, "VCOL")
             self.color_attr = vcol.name
             self.mixer_group.nodes['src_vcol'].layer_name = vcol.name
+
+            if self.type == 'PAINT' and self.paint_group:
+                self.paint_group.nodes['col_attr'].layer_name = vcol.name
+    
             UP_DEBUG("Renamed color attribute to " + self.color_attr)  
-
     self.mixer_group.name = create_id_name(target, self, "MIXER")
-
 ###########################################################
 # Classes
 ###########################################################
@@ -365,9 +375,9 @@ class UP_PT_PropsPanel(bpy.types.Panel):
                     socket.draw(context, row, opacity_node, socket.name) # Opacity Slider
                     
                     box = layout.box()
-                    box.label(text = "Paint Material Properties")
+                    box.label(text="Paint Material Properties")
                     layer = active_layer
-                    painter_name = f"{layer.name} Paint ({obj.name}) {layer.id}" 
+                    painter_name = create_id_name(obj, layer, "PAINTER")
                     paint_group = obj.uberpaint.blend_mat.node_tree.nodes[painter_name]
                     for input_socket in paint_group.inputs:
                         if not input_socket.is_linked:
