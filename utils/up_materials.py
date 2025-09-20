@@ -59,8 +59,10 @@ def up_blendmat_node_group(mat, converted_mats, mixer_groups, bg_color):
         disp_out = next((s for s in group_a.outputs if s.type == 'VECTOR'), None)
         if shader_out:
             up_blendmat.links.new(shader_out, mixer_node.inputs[0])
+            print(f"Linked shader output for {group_a.name}")
         if disp_out:
-            up_blendmat.links.new(disp_out, mixer_node.inputs[1])
+            up_blendmat.links.new(disp_out, mixer_node.inputs[2])
+            print(f"Linked displacement output for {group_a.name}")
         #else:
             #raise ValueError("Source materials must have material outputs.")
         # Connect mixers to mixers >:D
