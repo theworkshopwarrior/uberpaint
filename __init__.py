@@ -186,7 +186,7 @@ def create_id_name(obj, layer, type=""):
         name = f"{layer.name} Mixer ({obj.name}) {layer.id}" 
         return name   
     elif type == 'VCOL':
-        name = f"_upm:{obj.name} - {layer.name}_{layer.id}"
+        name = f"_upm: {obj.name} - {layer.name}_{layer.id}"
         return name
     else:
         name = f"_upm: {obj.name} - {layer.name} ({layer.id})"
@@ -205,6 +205,7 @@ def rename_layer(self, context):
             vcol = target.data.color_attributes[vcol_index]
             vcol.name = create_id_name(target, self, "VCOL")
             self.color_attr = vcol.name
+            self.mixer_group.nodes['src_vcol'].layer_name = vcol.name
             UP_DEBUG("Renamed color attribute to " + self.color_attr)  
 
     self.mixer_group.name = create_id_name(target, self, "MIXER")
@@ -606,7 +607,7 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
                 
                 i = 0 
                 ngroups = obj.data.vertex_colors
-                valid_vcols = [vcol.name for vcol in ngroups if vcol.name.startswith('_upm: '+obj.name+" - ")]      
+                valid_vcols = [vcol.name for vcol in ngroups if vcol.name.startswith('_upm: ')]      
                 vcols_to_add = {mat.color_attr for mat in obj.uberpaint.layers}
 
                 for vcol in vcols_to_add:
@@ -849,7 +850,7 @@ class UP_OT_RemoveMaterial(bpy.types.Operator):
         # # Remove Color Attributes :D
         vcol_layers = obj.data.vertex_colors
         vcols = [vcol for vcol in vcol_layers if vcol.name.startswith('_upm: '+obj.name+" - ")]      
-        if hasattr(obj.data, "vertex_colors") and len(vcols) > 0 and obj.mask_type == "VERTEX":
+        if hasattr(obj.data, "vertex_colors") and len(vcols) > 0 and obj.uberpaint.mask_type == "VERTEX":
             obj_clrs = [entry.color_attr for entry in obj.uberpaint.layers if entry.color_attr] 
             vcols = []
             for color_attr in obj_clrs:
