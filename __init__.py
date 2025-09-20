@@ -15,10 +15,7 @@ links = {
         }
          
 #_TODO:_
-# Clean up unneccesary pointers
-# Remove references to pointers upon object deletion
-# Fix error when writing in finally statement
-
+#
 # _DONE:_
 #--- 0.9:
 # Displacement offset
