@@ -15,7 +15,7 @@ links = {
         }
          
 #_TODO:_
-# Fix broken material when no displacement socket on source material
+#
 # _DONE:_
 #--- 0.9:
 # Displacement offset
@@ -34,6 +34,7 @@ links = {
 # Allow paint layers to work on generation
 # Displacement blending textures are automatically added
 # Fix draw errors with object not selected
+# Fix broken material when no displacement socket on source material
 
 # _IMPEDED:_
 # Don't open up popup if already up?
@@ -709,7 +710,7 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
             self.report({'WARNING'}, "Something went wrong!  Please check the console for more info.")
             UP_DEBUG(f"Error occurred: {e}")
             # DEV ONLY
-            # traceback.print_exc()
+            #traceback.print_exc()
             return {'CANCELLED'}
         
         finally:

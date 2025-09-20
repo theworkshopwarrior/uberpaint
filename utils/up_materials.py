@@ -61,9 +61,8 @@ def up_blendmat_node_group(mat, converted_mats, mixer_groups, bg_color):
             up_blendmat.links.new(shader_out, mixer_node.inputs[0])
         if disp_out:
             up_blendmat.links.new(disp_out, mixer_node.inputs[1])
-
-        else:
-            raise ValueError("Source materials must have material outputs.")
+        #else:
+            #raise ValueError("Source materials must have material outputs.")
         # Connect mixers to mixers >:D
         if loop_counter != 0:
             up_blendmat.links.new(prev_mixer_node.outputs[0], mixer_node.inputs[1])
