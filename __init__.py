@@ -708,7 +708,7 @@ class UP_OT_GenerateMaterial(bpy.types.Operator):
             self.report({'WARNING'}, "Something went wrong!  Please check the console for more info.")
             UP_DEBUG(f"Error occurred: {e}")
             # DEV ONLY
-            traceback.print_exc()
+            # traceback.print_exc()
             return {'CANCELLED'}
         
         finally:

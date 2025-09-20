@@ -55,11 +55,13 @@ def up_blendmat_node_group(mat, converted_mats, mixer_groups, bg_color):
         mixer_node.location = (120, _vertical_height*loop_counter)
         group_a.location = (-220.0, _vertical_height*loop_counter)
 
-        # Connect groups to mixers
-        if len(group_a.outputs) > 0:
-            up_blendmat.links.new(group_a.outputs[0], mixer_node.inputs[0])
-            if len(group_a.outputs) > 1: # Sometimes people are too lazy to use displacement
-                up_blendmat.links.new(group_a.outputs[1], mixer_node.inputs[2]) 
+        shader_out = next((s for s in group_a.outputs if s.type == 'SHADER'), None)
+        disp_out = next((s for s in group_a.outputs if s.type == 'VECTOR'), None)
+        if shader_out:
+            up_blendmat.links.new(shader_out, mixer_node.inputs[0])
+        if disp_out:
+            up_blendmat.links.new(disp_out, mixer_node.inputs[1])
+
         else:
             raise ValueError("Source materials must have material outputs.")
         # Connect mixers to mixers >:D
